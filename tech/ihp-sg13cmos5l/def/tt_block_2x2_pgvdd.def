@@ -93,15 +93,11 @@ TRACKS X 480 DO 873 STEP 480 LAYER Metal3 ;
 TRACKS Y 420 DO 746 STEP 420 LAYER Metal3 ;
 TRACKS X 480 DO 873 STEP 480 LAYER Metal4 ;
 TRACKS Y 420 DO 746 STEP 420 LAYER Metal4 ;
-TRACKS X 480 DO 873 STEP 480 LAYER Metal5 ;
-TRACKS Y 420 DO 746 STEP 420 LAYER Metal5 ;
 TRACKS X 1640 DO 183 STEP 2280 LAYER TopMetal1 ;
-TRACKS Y 1640 DO 137 STEP 2280 LAYER TopMetal1 ;
-TRACKS X 2000 DO 105 STEP 4000 LAYER TopMetal2 ;
-TRACKS Y 2000 DO 78 STEP 4000 LAYER TopMetal2 ;
+TRACKS Y 1640 DO 136 STEP 2280 LAYER TopMetal1 ;
 COMPONENTS 0 ;
 END COMPONENTS
-PINS 51 ;
+PINS 43 ;
     - clk + NET clk + DIRECTION INPUT + USE SIGNAL
       + PORT
         + LAYER Metal4 ( -150 -500 ) ( 150 500 )
@@ -114,38 +110,6 @@ PINS 51 ;
       + PORT
         + LAYER Metal4 ( -150 -500 ) ( 150 500 )
         + PLACED ( 183360 313240 ) N ;
-    - ua[0] + NET ua[0] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 191040 1000 ) N ;
-    - ua[1] + NET ua[1] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 166560 1000 ) N ;
-    - ua[2] + NET ua[2] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 142080 1000 ) N ;
-    - ua[3] + NET ua[3] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 117600 1000 ) N ;
-    - ua[4] + NET ua[4] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 93120 1000 ) N ;
-    - ua[5] + NET ua[5] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 68640 1000 ) N ;
-    - ua[6] + NET ua[6] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 44160 1000 ) N ;
-    - ua[7] + NET ua[7] + DIRECTION INOUT + USE SIGNAL
-      + PORT
-        + LAYER TopMetal1 ( -875 -1000 ) ( 875 1000 )
-        + PLACED ( 19680 1000 ) N ;
     - ui_in[0] + NET ui_in[0] + DIRECTION INPUT + USE SIGNAL
       + PORT
         + LAYER Metal4 ( -150 -500 ) ( 150 500 )
@@ -311,18 +275,10 @@ SPECIALNETS 2 ;
     - VGND + USE GROUND ;
     - VPWR + USE POWER ;
 END SPECIALNETS
-NETS 51 ;
+NETS 43 ;
     - clk ( PIN clk ) + USE SIGNAL ;
     - ena ( PIN ena ) + USE SIGNAL ;
     - rst_n ( PIN rst_n ) + USE SIGNAL ;
-    - ua[0] ( PIN ua[0] ) + USE SIGNAL ;
-    - ua[1] ( PIN ua[1] ) + USE SIGNAL ;
-    - ua[2] ( PIN ua[2] ) + USE SIGNAL ;
-    - ua[3] ( PIN ua[3] ) + USE SIGNAL ;
-    - ua[4] ( PIN ua[4] ) + USE SIGNAL ;
-    - ua[5] ( PIN ua[5] ) + USE SIGNAL ;
-    - ua[6] ( PIN ua[6] ) + USE SIGNAL ;
-    - ua[7] ( PIN ua[7] ) + USE SIGNAL ;
     - ui_in[0] ( PIN ui_in[0] ) + USE SIGNAL ;
     - ui_in[1] ( PIN ui_in[1] ) + USE SIGNAL ;
     - ui_in[2] ( PIN ui_in[2] ) + USE SIGNAL ;
