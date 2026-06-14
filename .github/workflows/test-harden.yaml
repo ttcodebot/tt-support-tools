@@ -18,8 +18,7 @@ jobs:
       PDK: ${{ matrix.pdk }}
       PDK_ROOT: /home/runner/pdk
       PROJECT_DIR: /home/runner/project
-      LIBRELANE_VERSION: '2.4.2'
-      LIBRELANE_VERSION_DEV: '3.0.0.dev44'
+      LIBRELANE_VERSION: '3.0.2'
 
     steps:
       - name: Check out code
@@ -35,13 +34,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install librelane
-        if: "${{ matrix.pdk != 'ihp-sg13g2' }}"
         run: pip install librelane==${LIBRELANE_VERSION}
-
-      # LibreLane 2.4.2 does not support ihp-sg13g2. Remove once 3.0.0 is released.
-      - name: Install librelane 3 dev (IHP only)
-        if: "${{ matrix.pdk == 'ihp-sg13g2' }}"
-        run: pip install librelane==${LIBRELANE_VERSION_DEV}
 
       - name: Clone the factory test
         if: "${{ matrix.pdk != 'ihp-sg13g2' }}"
