@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PDK_ROOT: /home/runner/pdk
-      PDK_VERSION: ff08c23db8359afce3f134c454e7930586d0641c
+      PDK_VERSION: e8daeda73ca8f5814dbc0b11d1d05802251a3750
 
     steps:
       - name: Check out code

@@ -4,7 +4,6 @@ import logging
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
 import traceback
@@ -130,43 +129,36 @@ def klayout_sg13g2(gds: str):
     )
 
 
-def klayout_gf180mcuD_antenna(gds: str):
-    return klayout_drc(
-        gds,
-        "antenna",
-        "antenna.drc",
-        script_dir=f"{PDK_ROOT}/{PDK_NAME}/libs.tech/klayout/tech/drc/rule_decks",
-    )
+def klayout_gf180mcuD_rule_deck(gds: str, top_module: str, check: str, decks: str):
+    # All gf180mcuD DRC runs go through the PDK's unified rule deck
+    # (gf180mcu.drc); `decks` selects which rule groups to run (see its
+    # `-rd help=true` output).
+    logging.info(f"Running klayout {check} on {gds}")
+    script = f"{PDK_ROOT}/{PDK_NAME}/libs.tech/klayout/tech/drc/gf180mcu.drc"
+    script_vars = {
+        "input": gds,
+        "topcell": top_module,
+        "variant": "gf180mcuD",  # metal_top=11K, mim_option=B, metal_level=5LM
+        "run_mode": "deep",
+        "threads": "1",  # single-threaded to work around a klayout bug
+        "decks": decks,
+    }
+    klayout_custom_drc(check, script, script_vars, ["report"])
+
+
+def klayout_gf180mcuD_antenna(gds: str, top_module: str):
+    # Antenna rules only - they are part of the full deck but get their own
+    # check, so the full DRC below excludes them to avoid running them twice.
+    return klayout_gf180mcuD_rule_deck(gds, top_module, "antenna", "antenna")
 
 
 def klayout_gf180mcuD_drc(gds: str, top_module: str):
-    logging.info(f"Running klayout gf180mcuD DRC on {gds}")
-    run_dir = f"{REPORTS_PATH}/gf180mcuD_drc"
-    os.makedirs(run_dir, exist_ok=True)
-    report_file = f"{run_dir}/{os.path.splitext(os.path.basename(gds))[0]}_main.lyrdb"
-    if os.path.exists(report_file):
-        os.remove(report_file)
-
-    run_drc = f"{PDK_ROOT}/{PDK_NAME}/libs.tech/klayout/tech/drc/run_drc.py"
-    subprocess.run(
-        [
-            sys.executable,
-            run_drc,
-            f"--path={gds}",
-            f"--topcell={top_module}",
-            "--variant=D",  # gf180mcuD: metal_top=11K, mim_option=B, metal_level=5LM
-            "--run_mode=deep",
-            "--thr=1",  # single-threaded to work around a klayout deadlock bug
-            f"--run_dir={run_dir}",
-        ],
+    # Full rule deck (FEOL + BEOL + connectivity) minus density and antenna.
+    # Density is excluded because user projects rely on the metal fill that is
+    # added after precheck to meet it; antenna has its own check above.
+    return klayout_gf180mcuD_rule_deck(
+        gds, top_module, "gf180mcuD", "all,-density,-antenna"
     )
-
-    # run_drc.py exits non-zero on violations, so we judge the result from the
-    # report database it produces (matching the other klayout checks).
-    if not os.path.exists(report_file):
-        raise PrecheckFailure("Klayout gf180mcuD DRC did not produce a report")
-
-    check_drc_report("gf180mcuD DRC", report_file)
 
 
 def klayout_checks(gds: str, expected_name: str, tech: str):
@@ -529,7 +521,7 @@ def main():
         },
         {
             "name": "Antenna check",
-            "check": lambda: klayout_gf180mcuD_antenna(gds_file),
+            "check": lambda: klayout_gf180mcuD_antenna(gds_file, top_module),
             "techs": ["gf180mcuD"],
         },
         {

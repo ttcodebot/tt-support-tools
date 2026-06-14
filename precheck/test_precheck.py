@@ -975,14 +975,14 @@ def test_gf180mcuD_drc_pass(gds_gf180_drc_pass: str):
 def test_gf180mcuD_drc_fail(gds_gf180_drc_fail: str):
     with pytest.raises(
         precheck.PrecheckFailure,
-        match="Klayout gf180mcuD DRC failed with 1 DRC violations",
+        match="Klayout gf180mcuD failed with 1 DRC violations",
     ):
         precheck.klayout_gf180mcuD_drc(gds_gf180_drc_fail, "TEST_gf180_drc_fail")
 
 
 @gf180mcuD_only
 def test_antenna_pass(gds_antenna_pass: str):
-    precheck.klayout_gf180mcuD_antenna(gds_antenna_pass)
+    precheck.klayout_gf180mcuD_antenna(gds_antenna_pass, "TEST_antenna_pass")
 
 
 @gf180mcuD_only
@@ -991,4 +991,4 @@ def test_antenna_fail(gds_antenna_fail: str):
         precheck.PrecheckFailure,
         match="Klayout antenna failed with 1 DRC violations",
     ):
-        precheck.klayout_gf180mcuD_antenna(gds_antenna_fail)
+        precheck.klayout_gf180mcuD_antenna(gds_antenna_fail, "TEST_antenna_fail")

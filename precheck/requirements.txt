@@ -6,8 +6,6 @@
 #
 click==8.3.1
     # via yowasp-yosys
-docopt==0.6.2
-    # via tt-precheck (pyproject.toml)
 gdstk==0.9.52
     # via tt-precheck (pyproject.toml)
 iniconfig==2.0.0

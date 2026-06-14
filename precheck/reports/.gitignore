@@ -6,7 +6,7 @@ drc_zero_area.xml
 drc_nwell_urpm.xml
 drc_sg13g2.xml
 drc_antenna.xml
-gf180mcuD_drc/
+drc_gf180mcuD.xml
 magic_drc.mag
 magic_drc.txt
 results.md
