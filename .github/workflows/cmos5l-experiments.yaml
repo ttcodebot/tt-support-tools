@@ -1,0 +1,162 @@
+name: cmos5l experiments
+
+on:
+  workflow_dispatch:
+
+env:
+  PDK_ROOT: /home/runner/pdk
+  CIEL_VERSION: '3.2.0'
+
+jobs:
+  # Harden the ttihp0p4 factory test with different LibreLane / PDK combinations,
+  # then precheck (incl. KLayout DRC) the result.
+  harden:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - librelane: '3.0.2'
+            pdk_version: 7bbb4b5a5b64c446fedc64eacadc33fa65ade276
+          - librelane: '3.0.16'
+            pdk_version: 7bbb4b5a5b64c446fedc64eacadc33fa65ade276
+          - librelane: '3.1.0.dev3'
+            pdk_version: 89d42ee6d2fd9b50b86a1aada6fee6673c3e6008
+    name: harden (LibreLane ${{ matrix.librelane }}, PDK ${{ matrix.pdk_version }})
+    runs-on: ubuntu-24.04
+    env:
+      PDK: ihp-sg13cmos5l
+      PROJECT_DIR: /home/runner/project
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt -r precheck/requirements.txt
+      - run: pip install librelane==${{ matrix.librelane }}
+      - name: Install ihp-sg13cmos5l PDK
+        run: |
+          python -m venv /tmp/ciel
+          /tmp/ciel/bin/pip install ciel==${CIEL_VERSION}
+          /tmp/ciel/bin/ciel enable --pdk ihp-sg13cmos5l ${{ matrix.pdk_version }}
+      - run: git clone https://github.com/TinyTapeout/ttihp0p4-factory-test ${PROJECT_DIR}
+      - run: cp -r . ${PROJECT_DIR}/tt
+      - name: Harden
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python ./tt/tt_tool.py --pdk ihp-sg13cmos5l --create-user-config
+          python ./tt/tt_tool.py --pdk ihp-sg13cmos5l --harden
+          python ./tt/tt_tool.py --pdk ihp-sg13cmos5l --create-tt-submission
+          python ./tt/tt_tool.py --pdk ihp-sg13cmos5l --print-stats --print-warnings --print-cell-summary | tee -a $GITHUB_STEP_SUMMARY
+      - uses: rikhuijzer/cache-install@c46c673b14b0780c6749d7a45f26ebc07c8c7388
+        with:
+          key: nix-${{ hashFiles('precheck/default.nix') }}
+          nix_file: 'precheck/default.nix'
+      - name: Precheck the hardened project
+        working-directory: precheck
+        run: |
+          nix-build
+          nix-shell --run "python precheck.py --gds ${PROJECT_DIR}/tt_submission/tt_um_factory_test.gds --tech ihp-sg13cmos5l"; rc=$?
+          cat reports/results.md >> $GITHUB_STEP_SUMMARY
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: harden-${{ matrix.librelane }}
+          path: |
+            ${{ env.PROJECT_DIR }}/runs/wokwi/*.log
+            ${{ env.PROJECT_DIR }}/runs/wokwi/final/metrics.*
+            ${{ env.PROJECT_DIR }}/tt_submission
+            precheck/reports
+
+  # Full precheck (incl. KLayout DRC) on the 40 projects of the ttihp0p4 shuttle.
+  precheck-ttihp0p4:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: ubuntu-24.04
+    env:
+      PDK: ihp-sg13cmos5l
+      PDK_VERSION: 7bbb4b5a5b64c446fedc64eacadc33fa65ade276
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r precheck/requirements.txt
+      - name: Install ihp-sg13cmos5l PDK
+        run: |
+          python -m venv /tmp/ciel
+          /tmp/ciel/bin/pip install ciel==${CIEL_VERSION}
+          /tmp/ciel/bin/ciel enable --pdk ihp-sg13cmos5l ${PDK_VERSION}
+      - name: Fetch ttihp0p4 projects
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/TinyTapeout/tinytapeout-ihp-0p4-staging /tmp/shuttle
+          git -C /tmp/shuttle sparse-checkout set projects
+      - uses: rikhuijzer/cache-install@c46c673b14b0780c6749d7a45f26ebc07c8c7388
+        with:
+          key: nix-${{ hashFiles('precheck/default.nix') }}
+          nix_file: 'precheck/default.nix'
+      - name: Precheck
+        run: |
+          (cd precheck && nix-build)
+          projects=$(ls -d /tmp/shuttle/projects/tt_um_* | xargs -n1 basename | sort | awk 'NR % 4 == ${{ matrix.shard }}')
+          (cd precheck && nix-shell --run "../.github/cmos5l-test/precheck-projects.sh .. ihp-sg13cmos5l /tmp/shuttle/projects /tmp/out $(echo $projects)")
+          cat /tmp/out/summary.md >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: precheck-ttihp0p4-${{ matrix.shard }}
+          path: /tmp/out
+
+  # Regression: precheck sg13g2 projects with main and with this branch, results must match.
+  precheck-sg13g2-regression:
+    runs-on: ubuntu-24.04
+    env:
+      PDK: ihp-sg13g2
+      PDK_VERSION: c4b8b4e5e7a05f375cca3815d51b3a37721fbf5c
+      PROJECTS: tt_um_140oo041_fpu130 tt_um_4tap_mac tt_um_4x4npu tt_um_94442024_mini_cpu tt_um_CDM tt_um_GiulioGirelli_packet_processor tt_um_S4xU4 tt_um_Tbilisi_CORDIC_Engine tt_um_TscherterJunior_stapel_geraet tt_um_UART_TX tt_um_ULSR88 tt_um_abeccari_swsynth
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: TinyTapeout/tt-support-tools
+          ref: main
+          path: main-tools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r precheck/requirements.txt
+      - name: Install ihp-sg13g2 PDK
+        uses: TinyTapeout/ciel-action@v1
+        with:
+          pdk_name: ihp-sg13g2
+          pdk_version: ${{ env.PDK_VERSION }}
+          pdk_root: ${{ env.PDK_ROOT }}
+      - name: Fetch ttihp26b projects
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/TinyTapeout/tinytapeout-ihp-26b /tmp/shuttle
+          git -C /tmp/shuttle sparse-checkout set $(for p in $PROJECTS; do echo projects/$p; done)
+      - uses: rikhuijzer/cache-install@c46c673b14b0780c6749d7a45f26ebc07c8c7388
+        with:
+          key: nix-${{ hashFiles('precheck/default.nix') }}
+          nix_file: 'precheck/default.nix'
+      - name: Precheck with main and with this branch
+        run: |
+          (cd precheck && nix-build)
+          (cd precheck && nix-shell --run "../.github/cmos5l-test/precheck-projects.sh ../main-tools ihp-sg13g2 /tmp/shuttle/projects /tmp/out-main $PROJECTS")
+          (cd precheck && nix-shell --run "../.github/cmos5l-test/precheck-projects.sh .. ihp-sg13g2 /tmp/shuttle/projects /tmp/out-branch $PROJECTS")
+          echo '### main' >> $GITHUB_STEP_SUMMARY; cat /tmp/out-main/summary.md >> $GITHUB_STEP_SUMMARY
+          echo '### branch' >> $GITHUB_STEP_SUMMARY; cat /tmp/out-branch/summary.md >> $GITHUB_STEP_SUMMARY
+          for p in $PROJECTS; do
+            diff <(sed 's/([0-9]*s)//' /tmp/out-main/$p.md) <(sed 's/([0-9]*s)//' /tmp/out-branch/$p.md) > /dev/null || { echo "MISMATCH: $p"; diff /tmp/out-main/$p.md /tmp/out-branch/$p.md; exit 1; }
+          done
+          echo "All $(echo $PROJECTS | wc -w) results identical" | tee -a $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: precheck-sg13g2-regression
+          path: /tmp/out-*
