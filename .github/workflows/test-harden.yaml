@@ -19,6 +19,8 @@ jobs:
       PDK_ROOT: /home/runner/pdk
       PROJECT_DIR: /home/runner/project
       LIBRELANE_VERSION: '3.0.2'
+      # The sg13cmos5l Magic techfile requires Magic >= 8.3.657, but LibreLane 3.0.x ships 8.3.623.
+      LIBRELANE_VERSION_IHP_SG13CMOS5L: '3.1.0.dev3'
       CIEL_VERSION: '3.2.0'
       IHP_SG13CMOS5L_PDK_VERSION: '89d42ee6d2fd9b50b86a1aada6fee6673c3e6008'
 
@@ -36,7 +38,12 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install librelane
+        if: "${{ matrix.pdk != 'ihp-sg13cmos5l' }}"
         run: pip install librelane==${LIBRELANE_VERSION}
+
+      - name: Install librelane (ihp-sg13cmos5l)
+        if: "${{ matrix.pdk == 'ihp-sg13cmos5l' }}"
+        run: pip install librelane==${LIBRELANE_VERSION_IHP_SG13CMOS5L}
 
       # LibreLane bundles ciel 2.x, which doesn't know about sg13cmos5l (added in ciel 3.0.0),
       # so we install the PDK using a separate ciel installation and run LibreLane with --manual-pdk.
