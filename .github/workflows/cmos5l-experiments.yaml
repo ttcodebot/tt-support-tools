@@ -34,8 +34,9 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-      - run: pip install -r requirements.txt -r precheck/requirements.txt
-      - run: pip install librelane==${{ matrix.librelane }}
+      - run: pip install -r requirements.txt librelane==${{ matrix.librelane }}
+      # precheck pins different versions of some packages, so it gets its own venv
+      - run: python -m venv /tmp/precheck-venv && /tmp/precheck-venv/bin/pip install -r precheck/requirements.txt
       - name: Install ihp-sg13cmos5l PDK
         run: |
           python -m venv /tmp/ciel
@@ -58,7 +59,7 @@ jobs:
         working-directory: precheck
         run: |
           nix-build
-          nix-shell --run "python precheck.py --gds ${PROJECT_DIR}/tt_submission/tt_um_factory_test.gds --tech ihp-sg13cmos5l"; rc=$?
+          nix-shell --run "/tmp/precheck-venv/bin/python precheck.py --gds ${PROJECT_DIR}/tt_submission/tt_um_factory_test.gds --tech ihp-sg13cmos5l"; rc=$?
           cat reports/results.md >> $GITHUB_STEP_SUMMARY
           exit $rc
       - uses: actions/upload-artifact@v4
