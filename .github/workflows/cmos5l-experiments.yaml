@@ -1,6 +1,8 @@
 name: cmos5l experiments
 
 on:
+  push:
+    branches: [cmos5l-ci-experiments]
   workflow_dispatch:
 
 env:
