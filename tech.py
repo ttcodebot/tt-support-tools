@@ -28,6 +28,8 @@ class Tech(Protocol):
     librelane_config: Dict[
         str, Union[bool, int, float, str, List[str], Dict[str, List[str]]]
     ]
+    """ Extra LibreLane configuration for micro tile projects (tiles: micro); empty if unsupported """
+    micro_librelane_config: Dict[str, Union[bool, int, float, str]]
     """ These layers will be removed from the SVG render of the layout """
     label_layers: List[Tuple[int, int]]
     """ These layers are hardly visible and will also be removed from the SVG render of the layout """
@@ -76,6 +78,7 @@ class Sky130Tech(Tech):
     netlist_type = "pnl"
     project_top_metal_layer = "met4"
     librelane_config = {}
+    micro_librelane_config = {}
     label_layers = [
         (64, 59),  # pwell.label
         (64, 5),  # nwell.label
@@ -136,6 +139,7 @@ class IHPG2Tech(Tech):
     netlist_type = "nl"
     project_top_metal_layer = "TopMetal1"
     librelane_config = {}
+    micro_librelane_config = {}
     label_layers = [
         (8, 1),  # Metal1.label
         (8, 25),  # Metal1.text
@@ -192,6 +196,16 @@ class IHPCmos5lTech(IHPG2Tech):
     librelane_pdk_args = "--pdk ihp-sg13cmos5l"
     cell_regexp = r"^\s*sg13cmos5l_(?P<cell_name>\S+)_(?P<cell_drive>\d+)"
     project_top_metal_layer = "Metal4"
+    # Micro tiles use Metal1 to Metal3: signals route on Metal2 and Metal3 (Metal1
+    # is the standard cell layer and cannot carry horizontal routing), power comes
+    # in on horizontal Metal3 stripes that the container reaches with Via3 from
+    # its Metal4 stripes. Metal4 is left to the container project.
+    micro_librelane_config = {
+        "RT_MAX_LAYER": "Metal3",
+        "PDN_MULTILAYER": True,
+        "PDN_VERTICAL_LAYER": "Metal2",
+        "PDN_HORIZONTAL_LAYER": "Metal3",
+    }
     label_layers = [
         (8, 1),  # Metal1.label
         (8, 25),  # Metal1.text
@@ -257,6 +271,7 @@ class GF180MCUDTech(Tech):
     buried_layers = [
         # TODO: add buried layers
     ]
+    micro_librelane_config = {}
     scramble_cells = "gf180mcu_fd_sc_"
     mux_config_yaml_name = "gf180mcuD.yaml"
     mux_macros = [
@@ -293,6 +308,7 @@ class FpgaTech(Tech):
     netlist_type = "nl"
     project_top_metal_layer = ""
     librelane_config = {}
+    micro_librelane_config = {}
     label_layers = []
     buried_layers = []
     scramble_cells = None

@@ -198,6 +198,14 @@ class Project:
             required_ports += [
                 ["inout", "ua", 8],
             ]
+        if self.info.tiles == "micro":
+            # Micro tiles only get a subset of the ports, the container project muxes them
+            required_ports = [
+                ["input", "clk", 1],
+                ["input", "rst_n", 1],
+                ["input", "ui_in", 8],
+                ["output", "uo_out", 8],
+            ]
         if include_power_ports:
             required_ports += [
                 [("input", "inout"), "VGND", 1],
@@ -505,6 +513,11 @@ class Project:
             "RT_MAX_LAYER": self.tech.project_top_metal_layer,
         }
         config.update(self.tech.librelane_config)
+        if tiles == "micro":
+            if not self.tech.micro_librelane_config:
+                logging.error(f"micro tiles are not supported for {self.pdk}")
+                exit(1)
+            config.update(self.tech.micro_librelane_config)
         write_config(config, os.path.join(self.src_dir, "user_config"), ("json",))
         self.create_merged_config()
 

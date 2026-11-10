@@ -455,6 +455,7 @@ def main():
     tiles = project_cfg.get("tiles", "1x1")
     analog_pins = project_cfg.get("analog_pins", 0)
     is_analog = analog_pins > 0
+    is_micro = tiles == "micro"
     # "uses_3v3" is the legacy name for "uses_vapwr"; still accepted for compat.
     uses_vapwr = bool(project_cfg.get("uses_vapwr", project_cfg.get("uses_3v3", False)))
     pinout = yaml_data.get("pinout", {})
@@ -533,7 +534,7 @@ def main():
         {
             "name": "Pin check",
             "check": lambda: pin_check(
-                gds_file, lef_file, template_def, top_module, uses_vapwr, tech
+                gds_file, lef_file, template_def, top_module, uses_vapwr, tech, is_micro
             ),
         },
         {
