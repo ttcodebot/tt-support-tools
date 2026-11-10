@@ -413,7 +413,9 @@ class Project:
     def fetch_wokwi_files(self):
         logging.info("fetching wokwi files")
         src_file = self.info.source_files[0]
-        url = f"https://wokwi.com/api/projects/{self.info.wokwi_id}/verilog"
+        # Wokwi generates a module with the reduced port list for micro tiles
+        params = "?micro=1" if self.info.tiles == "micro" else ""
+        url = f"https://wokwi.com/api/projects/{self.info.wokwi_id}/verilog{params}"
         git_utils.fetch_file(url, os.path.join(self.src_dir, src_file))
 
         # also fetch the wokwi diagram
