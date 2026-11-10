@@ -238,6 +238,10 @@ power_pins_layer = {
 micro_power_pins_layers = {
     "gf180mcuD": ["Metal2", "Metal3"],
 }
+# Layers that belong to the container and must stay empty in a micro tile.
+micro_forbidden_layers = {
+    "gf180mcuD": ["Via3", "Metal4", "Metal4_Label"],
+}
 power_pins_min_width = {
     "sky130A": 1200,  # 1.2 um
     "ihp-sg13g2": 2100,  # 2.1 um

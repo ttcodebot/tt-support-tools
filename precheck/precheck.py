@@ -21,6 +21,7 @@ from tech_data import (
     boundary_layer,
     forbidden_layers,
     lyp_filename,
+    micro_forbidden_layers,
     tech_names,
     valid_layers,
 )
@@ -169,7 +170,7 @@ def klayout_gf180mcuD_drc(gds: str, top_module: str):
     )
 
 
-def klayout_checks(gds: str, expected_name: str, tech: str):
+def klayout_checks(gds: str, expected_name: str, tech: str, is_micro: bool = False):
     layout = pya.Layout()
     layout.read(gds)
     layers = load_layers(tech)
@@ -182,7 +183,10 @@ def klayout_checks(gds: str, expected_name: str, tech: str):
         )
 
     logging.info("Running forbidden layer check...")
-    for layer in forbidden_layers[tech]:
+    layer_names = list(forbidden_layers[tech])
+    if is_micro:
+        layer_names += micro_forbidden_layers[tech]
+    for layer in layer_names:
         layer_info = layers[layer]
         logging.info(f"* Checking {layer_info.name}")
         layer_index = layout.find_layer(layer_info.layer, layer_info.data_type)
@@ -528,7 +532,9 @@ def main():
         {"name": "KLayout zero area", "check": lambda: klayout_zero_area(gds_file)},
         {
             "name": "KLayout Checks",
-            "check": lambda: klayout_checks(gds_file, top_module, tech),
+            "check": lambda: klayout_checks(
+                gds_file, top_module, tech, is_micro=(tiles == "micro")
+            ),
         },
         {
             "name": "Pin check",
