@@ -414,6 +414,9 @@ class Project:
         logging.info("fetching wokwi files")
         src_file = self.info.source_files[0]
         url = f"https://wokwi.com/api/projects/{self.info.wokwi_id}/verilog"
+        if self.info.tiles == "micro":
+            # Wokwi generates a top module with just clk, rst_n, ui_in and uo_out
+            url += "?micro=1"
         git_utils.fetch_file(url, os.path.join(self.src_dir, src_file))
 
         # also fetch the wokwi diagram
