@@ -232,6 +232,12 @@ power_pins_layer = {
     "ihp-sg13cmos5l": "Metal4",
     "gf180mcuD": "Metal4",
 }
+# Micro tiles sit inside a container project, whose power stripes run over them
+# and connect to the horizontal power stripes on their top layer (the last one
+# listed here). Their vertical power stripes are one layer below.
+micro_power_pins_layers = {
+    "gf180mcuD": ["Metal2", "Metal3"],
+}
 power_pins_min_width = {
     "sky130A": 1200,  # 1.2 um
     "ihp-sg13g2": 2100,  # 2.1 um

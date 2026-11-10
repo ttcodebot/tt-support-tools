@@ -533,7 +533,13 @@ def main():
         {
             "name": "Pin check",
             "check": lambda: pin_check(
-                gds_file, lef_file, template_def, top_module, uses_vapwr, tech
+                gds_file,
+                lef_file,
+                template_def,
+                top_module,
+                uses_vapwr,
+                tech,
+                is_micro=(tiles == "micro"),
             ),
         },
         {

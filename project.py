@@ -198,6 +198,13 @@ class Project:
             required_ports += [
                 ["inout", "ua", 8],
             ]
+        if self.info.tiles == "micro":
+            required_ports = [
+                ["input", "clk", 1],
+                ["input", "rst_n", 1],
+                ["input", "ui_in", 8],
+                ["output", "uo_out", 8],
+            ]
         if include_power_ports:
             required_ports += [
                 [("input", "inout"), "VGND", 1],
@@ -480,6 +487,11 @@ class Project:
     def create_merged_config(self):
         config = read_config("src/config")
         user_config = read_config("src/user_config")
+        # LibreLane gives priority to the deprecated FP_PDN_* names, so remove them
+        # from the project config when the user config sets their replacement.
+        for key in user_config:
+            if key.startswith("PDN_"):
+                config.pop(f"FP_{key}", None)
         config.update(user_config)
         write_config(config, "src/config_merged")
 
@@ -505,6 +517,8 @@ class Project:
             "RT_MAX_LAYER": self.tech.project_top_metal_layer,
         }
         config.update(self.tech.librelane_config)
+        if tiles == "micro":
+            config.update(self.tech.micro_librelane_config)
         write_config(config, os.path.join(self.src_dir, "user_config"), ("json",))
         self.create_merged_config()
 

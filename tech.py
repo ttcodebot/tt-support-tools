@@ -28,6 +28,8 @@ class Tech(Protocol):
     librelane_config: Dict[
         str, Union[bool, int, float, str, List[str], Dict[str, List[str]]]
     ]
+    """ Extra LibreLane configuration for micro tiles (tiles: "micro"). Applied on top of librelane_config. """
+    micro_librelane_config: Dict[str, Union[bool, int, float, str]]
     """ These layers will be removed from the SVG render of the layout """
     label_layers: List[Tuple[int, int]]
     """ These layers are hardly visible and will also be removed from the SVG render of the layout """
@@ -76,6 +78,7 @@ class Sky130Tech(Tech):
     netlist_type = "pnl"
     project_top_metal_layer = "met4"
     librelane_config = {}
+    micro_librelane_config = {}
     label_layers = [
         (64, 59),  # pwell.label
         (64, 5),  # nwell.label
@@ -136,6 +139,7 @@ class IHPG2Tech(Tech):
     netlist_type = "nl"
     project_top_metal_layer = "TopMetal1"
     librelane_config = {}
+    micro_librelane_config = {}
     label_layers = [
         (8, 1),  # Metal1.label
         (8, 25),  # Metal1.text
@@ -251,6 +255,28 @@ class GF180MCUDTech(Tech):
             ],
         },
     }
+    micro_librelane_config = {
+        # A micro tile is a small macro placed inside a 1x1 container project.
+        # It uses Metal1 to Metal3. Metal4 belongs to the container: its vertical
+        # Metal4 power stripes run over the micro tile and connect to the
+        # horizontal Metal3 power stripes of the micro tile where they cross.
+        "RT_MAX_LAYER": "Metal3",
+        "PDN_MULTILAYER": True,
+        # Vertical Metal2 stripes tie the Metal1 rails together. Standard cells
+        # cannot be placed under them (they block access to the Metal1 pins), so
+        # there are only two pairs, with enough room around them for wide cells.
+        "PDN_VERTICAL_LAYER": "Metal2",
+        "PDN_VWIDTH": 1.6,
+        "PDN_VSPACING": 0.56,
+        "PDN_VPITCH": 72.24,
+        "PDN_VOFFSET": 34.76,
+        # Horizontal Metal3 stripes: the power pins that the container connects to.
+        "PDN_HORIZONTAL_LAYER": "Metal3",
+        "PDN_HWIDTH": 1.6,
+        "PDN_HSPACING": 1.76,
+        "PDN_HPITCH": 30.24,
+        "PDN_HOFFSET": 12.6,
+    }
     label_layers = [
         # TODO: add label layers
     ]
@@ -293,6 +319,7 @@ class FpgaTech(Tech):
     netlist_type = "nl"
     project_top_metal_layer = ""
     librelane_config = {}
+    micro_librelane_config = {}
     label_layers = []
     buried_layers = []
     scramble_cells = None
