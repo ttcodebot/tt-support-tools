@@ -241,9 +241,11 @@ power_pins_min_width = {
 # Micro tiles keep their power stripes low, so the container project can connect
 # to them from above
 micro_power_pins_layers = {
+    "sky130A": ["met2", "met3"],
     "ihp-sg13cmos5l": ["Metal2", "Metal3"],
 }
 micro_power_pins_min_width = {
+    "sky130A": 800,  # 0.8 um
     "ihp-sg13cmos5l": 1000,  # 1.0 um
 }
 boundary_layer = {

@@ -78,7 +78,16 @@ class Sky130Tech(Tech):
     netlist_type = "pnl"
     project_top_metal_layer = "met4"
     librelane_config = {}
-    micro_librelane_config = {}
+    # Micro tiles use li1 to met3: signals route on met1 to met3, power comes in
+    # on horizontal met3 stripes (tied to the met1 rails by met2 stripes) that
+    # the container reaches with via3 from its met4 stripes. met4 is left to the
+    # container project.
+    micro_librelane_config = {
+        "RT_MAX_LAYER": "met3",
+        "PDN_MULTILAYER": True,
+        "PDN_VERTICAL_LAYER": "met2",
+        "PDN_HORIZONTAL_LAYER": "met3",
+    }
     label_layers = [
         (64, 59),  # pwell.label
         (64, 5),  # nwell.label
