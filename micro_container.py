@@ -37,6 +37,7 @@ SITE = (0.46, 2.72)
 MARGIN_SITES = (6, 1)  # left/right in sites, top/bottom in rows
 LAYER_GDS = {  # drawing, pin, label
     "met3": ((70, 20), (70, 16), (70, 5)),
+    "met4": ((71, 20), (71, 16), (71, 5)),
 }
 PRBOUNDARY = (235, 4)
 OBS_LAYERS = ["li1", "met1", "met2", "met3"]
@@ -51,6 +52,15 @@ PIN_CLEARANCE = 0.45
 # its distance to the micro tile's interior / to the slot edge (met3 spacing)
 PAD = (0.32, 0.38)
 PAD_GAP = 0.3
+# The tools draw the via3 on every pin (pin_stack) and the slot's pins are met4 stubs, instead of
+# letting the router find a via access point on a met3 pin (slot_pin)
+PIN_VIA_STACK = True
+# The landing pad sits half a pin pitch (2.72 um) above its pin, in the free strip between pins
+JUMP = 1.36
+# Free met3 above and below a landing pad: twice the met3 spacing, for clock nets that CTS
+# routes with a double-spacing rule (CTS_APPLY_NDR)
+LANDING_CLEARANCE = 0.6
+STACK_GDS = {"via3": (70, 44), "met3": (70, 20), "met4": (71, 20)}
 # Locations and orientations of the four slots in the 1x1 container, in select order
 SLOTS = [((0.0, 0.0), "N"), ((90.62, 0.0), "FN"), ((0.0, 51.68), "N"), ((90.62, 51.68), "FN")]
 
@@ -115,6 +125,36 @@ def slot_pin(r):
     return (round(bx, 3), round(cy - PAD[1] / 2, 3), round(bx + PAD[0], 3), round(cy + PAD[1] / 2, 3))
 
 
+def pin_stack(r):
+    """The jumper the tools draw on every pin (PIN_VIA_STACK), all of it container metal:
+    - a via3 on the pin, with its met3 pad PAD_GAP away from the micro tile's interior; the pad
+      overhangs the 0.3 um pin by 0.04 um at top and bottom and stays inside its x range,
+    - a met4 bridge going up (met4's direction) by JUMP, into the free strip between two pins,
+    - a via3 down onto a met3 landing pad that runs to the slot edge: the slot's pin for the
+      router, which reaches it on met3 as it would reach an ordinary pin.
+    The landing pad and whatever the router connects to it meet the micro tile's pin only through
+    the met4 bridge. Returns the landing pad and a list of (layer, box)."""
+    x1, y1, x2, y2 = r
+    cy = (y1 + y2) / 2
+    by = cy + JUMP
+    cx = x1 + PAD_GAP + PAD[0] / 2
+    box = lambda a, b, c, d: tuple(round(v, 3) for v in (a, b, c, d))
+    landing = box(cx - PAD[0] / 2, by - PAD[1] / 2, x2, by + PAD[1] / 2)
+    shapes = [
+        ("via3", box(cx - 0.1, cy - 0.1, cx + 0.1, cy + 0.1)),
+        ("met3", box(cx - PAD[0] / 2, cy - PAD[1] / 2, cx + PAD[0] / 2, cy + PAD[1] / 2)),
+        ("met4", box(cx - 0.165, cy - 0.165, cx + 0.165, by + 0.165)),
+        ("via3", box(cx - 0.1, by - 0.1, cx + 0.1, by + 0.1)),
+        ("met3", landing),
+    ]
+    return landing, shapes
+
+
+def insert_pin_stack(layout: pya.Layout, cell: pya.Cell, r, trans: pya.DTrans):
+    for layer, box in pin_stack(r)[1]:
+        cell.shapes(layout.layer(*STACK_GDS[layer])).insert(pya.DBox(*box).transformed(trans))
+
+
 def write_placeholder(out_dir: str):
     width, height, pins, power_layer, stripes = micro_tile_interface()
     os.makedirs(out_dir, exist_ok=True)
@@ -141,10 +181,11 @@ def write_placeholder(out_dir: str):
         lef += [f"  PIN {name}", f"    DIRECTION {direction} ;", "    USE SIGNAL ;"]
         if direction == "INPUT":
             lef += [f"    ANTENNAGATEAREA {INPUT_GATE_AREA:.6f} ;"]
+        access = pin_stack(r)[0] if PIN_VIA_STACK else slot_pin(r)
         lef += [
             "    PORT",
             f"      LAYER {layer} ;",
-            f"        {rect(slot_pin(r))}",
+            f"        {rect(access)}",
             "    END",
             f"  END {name}",
         ]
@@ -175,6 +216,13 @@ def write_placeholder(out_dir: str):
         pin_rows.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, x2, y2 + PIN_CLEARANCE).to_itype(dbu))
         access = slot_pin(p[3])
         pin_keep.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, access[2] + PAD_GAP, y2 + PIN_CLEARANCE).to_itype(dbu))
+    if PIN_VIA_STACK:
+        # the tools' jumper is the only way to a pin: the pin layer is obstructed all over except
+        # around the landing pads (the router's pins), which keep the met3 spacing to the rest
+        pin_keep = pya.Region()
+        for p in pins:
+            lx1, ly1, lx2, ly2 = pin_stack(p[3])[0]
+            pin_keep.insert(pya.DBox(strip_x, ly1 - LANDING_CLEARANCE, lx2, ly2 + LANDING_CLEARANCE).to_itype(dbu))
     for layer in OBS_LAYERS:
         obs = inner
         if layer == below_pin:
@@ -188,6 +236,14 @@ def write_placeholder(out_dir: str):
         for box in obs.decompose_trapezoids_to_region().each():
             b = box.bbox().to_dtype(dbu)
             lef += [f"        {rect((b.left, b.bottom, b.right, b.top))}"]
+    if PIN_VIA_STACK:
+        # the jumpers' bridges and cuts above the pin layer, so that the router keeps its spacing
+        for stack_layer in ("via3", "met4"):
+            lef += [f"      LAYER {stack_layer} ;"]
+            for p in pins:
+                for shape_layer, box in pin_stack(p[3])[1]:
+                    if shape_layer == stack_layer:
+                        lef += [f"        {rect(box)}"]
     lef += ["  END", f"END {SLOT}", "END LIBRARY", ""]
     with open(os.path.join(out_dir, f"{SLOT}.lef"), "w") as f:
         f.write("\n".join(lef))
@@ -205,6 +261,11 @@ def write_placeholder(out_dir: str):
         cell.shapes(layout.layer(*drawing)).insert(box)
         cell.shapes(layout.layer(*pin)).insert(box)
         cell.shapes(layout.layer(*label)).insert(pya.DText(name, box.center().x, box.center().y))
+    if PIN_VIA_STACK:
+        # the via stacks: in the slot for the generic container's own checks; assemble() puts
+        # the same shapes into the container's top cell when the slot is swapped out
+        for name, _, layer, r in pins:
+            insert_pin_stack(layout, cell, r, pya.DTrans())
     layout.write(os.path.join(out_dir, f"{SLOT}.gds"))
 
     # Verilog: black box with power pins
@@ -326,6 +387,11 @@ def assemble(generic_final: str, top: str, out_dir: str, micro_dirs: List[str]):
         if not os.path.exists(path):
             path = os.path.join(micro_dir, f"{macro}.gds")
         cell, stats = read_layout_into(layout, path, macro)
+        if PIN_VIA_STACK:
+            # the via stacks on the pins belong to the container: keep them when the slot goes
+            trans = by_slot[index].dcplx_trans
+            for _, _, _, r in micro_tile_interface()[2]:
+                insert_pin_stack(layout, top_cell, r, trans)
         by_slot[index].cell_index = cell.cell_index()
         print(f"slot {index}: {macro} ({stats['new']} new cells, {stats['shared']} shared, {stats['renamed']} renamed)")
     layout.delete_cell(slot_cell.cell_index())
