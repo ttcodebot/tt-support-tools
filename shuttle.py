@@ -9,6 +9,8 @@ import git
 import klayout.db as pya
 import yaml
 
+import micro_container
+
 from config import Config
 from config_utils import merge_dicts
 from project import Project
@@ -145,8 +147,31 @@ class ShuttleConfig:
                 if len(module["analog"]) > 0:
                     project_info["analog_pins"] = project.analog_pins
 
+                micro_tiles = getattr(project, "micro_tiles", [])
+                if micro_tiles:
+                    project_info["type"] = "group"
                 project_index.append(project_info)
                 mux_index_reverse[module_name] = mux_address
+
+                # The micro tiles of a container share its mux address. The select value
+                # (uio_in) of each is its position in the group.
+                for subtile_addr, micro_tile in enumerate(micro_tiles):
+                    project_index.append(
+                        {
+                            "macro": micro_tile.info.top_module,
+                            "address": mux_address,
+                            "x": module["x"],
+                            "y": module["y"],
+                            "tiles": "micro",
+                            "repo": micro_tile.git_url,
+                            "commit": micro_tile.commit_id,
+                            "type": "subtile",
+                            "subtile_addr": subtile_addr,
+                            "subtile_addr_bits": micro_container.GROUP_SIZE.bit_length()
+                            - 1,
+                            "subtile_group": module_name,
+                        }
+                    )
 
         for project in self.projects:
             if project.info.top_module not in mux_index_reverse:
@@ -175,6 +200,11 @@ class ShuttleConfig:
                 includes_file.write(
                     f"$(USER_PROJECT_VERILOG)/../projects/{project.info.top_module}/{project.info.top_module}.v\n"
                 )
+                for micro_tile in getattr(project, "micro_tiles", []):
+                    name = micro_tile.info.top_module
+                    includes_file.write(
+                        f"$(USER_PROJECT_VERILOG)/../projects/{name}/{name}.v\n"
+                    )
 
     def list(self):
         for project in self.projects:
@@ -184,6 +214,8 @@ class ShuttleConfig:
         runs = f"tt-multiplexer/ol2/{macro}/runs/"
         if macro == "tt_um_chip_rom":
             runs = "tt/rom/runs/"
+        if macro == micro_container.GENERIC:
+            runs = "tt/micro_container/runs/"
         runlist = sorted(
             [
                 r
@@ -226,6 +258,20 @@ class ShuttleConfig:
         )
 
     def copy_macros(self):
+        # Micro tile containers: swap the placeholders of the hardened generic container
+        # for the micro tiles of every group. No place and route.
+        for project in self.projects:
+            micro_tiles = getattr(project, "micro_tiles", [])
+            if micro_tiles:
+                lastrun = self.find_last_run(micro_container.GENERIC)
+                logging.info(f"assembling {project.info.top_module} from {lastrun}")
+                micro_container.assemble(
+                    f"{lastrun}/final",
+                    project.info.top_module,
+                    project.local_dir,
+                    [m.local_dir for m in micro_tiles],
+                )
+
         logging.info("copying macros to tt_top:")
         copy_print_glob("projects/*/*.gds", "tt-multiplexer/ol2/tt_top/gds")
         # Convert .oas files to .gds

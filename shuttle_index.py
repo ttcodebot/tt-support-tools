@@ -10,6 +10,11 @@ class ShuttleIndexProject(TypedDict):
     repo: str
     commit: str
     analog_pins: NotRequired[tuple[int, ...]]
+    # Micro tile containers ("group") and their micro tiles ("subtile")
+    type: NotRequired[Literal["group", "subtile"]]
+    subtile_addr: NotRequired[int]
+    subtile_addr_bits: NotRequired[int]
+    subtile_group: NotRequired[str]
 
 
 class ShuttleIndexLayout(TypedDict):

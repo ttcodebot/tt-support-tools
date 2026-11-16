@@ -2,3 +2,5 @@
 setuptokens.sh
 __pycache__
 *.egg-info
+micro_container/tt_micro_tile_slot.*
+micro_container/runs

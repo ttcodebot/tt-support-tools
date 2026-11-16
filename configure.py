@@ -11,8 +11,10 @@ import sys
 from signal import SIG_DFL, SIGPIPE, signal
 from typing import Dict, List, TypedDict
 
+import git
 import yaml
 
+import micro_container
 from config import Config
 from documentation import Docs, interactive_doc_checker
 from logo import LogoGenerator
@@ -60,6 +62,10 @@ class Projects:
             if only_projects_list and project_id not in only_projects_list:
                 continue
 
+            # Micro tile containers are generated below, from the micro tile projects
+            if commit_id_data.get(micro_container.GROUP_MARKER, False):
+                continue
+
             project = Project(
                 index,
                 commit_id_data["repo"],
@@ -85,6 +91,40 @@ class Projects:
                 project.check_num_cells()
 
             self.projects.append(project)
+
+        # Micro tiles are not placed by the mux. They are grouped four at a time, and every
+        # group gets a container, which is an ordinary 1x1 project to the rest of the flow.
+        self.micro_projects = [p for p in self.projects if p.info.is_micro]
+        self.projects = [p for p in self.projects if not p.info.is_micro]
+        if self.micro_projects:
+            repo = git.Repo(".")
+            groups = micro_container.make_groups(
+                self.project_dir,
+                self.micro_projects,
+                config["id"],
+                list(repo.remotes[0].urls)[0],
+                repo.commit().hexsha,
+            )
+            for name, members in groups:
+                group_dir = os.path.join(self.project_dir, name)
+                commit_id_data = json.load(
+                    open(os.path.join(group_dir, "commit_id.json"))
+                )
+                project = Project(
+                    len(self.projects),
+                    commit_id_data["repo"],
+                    group_dir,
+                    pdk=config["pdk"],
+                    is_user_project=False,
+                )
+                project.commit_id = commit_id_data["commit"]
+                project.sort_id = commit_id_data["sort_id"]
+                project.post_clone_setup()
+                project.micro_tiles = members
+                self.projects.append(project)
+                logging.info(
+                    f"micro tile container {name}: {', '.join(m.info.top_module for m in members)}"
+                )
 
         self.projects.sort(key=lambda x: x.sort_id)
 
@@ -319,6 +359,13 @@ if __name__ == "__main__":
     if args.update_shuttle:
         shuttle.configure_mux()
         rom.write_rom()
+        if projects.micro_projects:
+            # Placeholder macro of the generic micro tile container, hardened next like the ROM
+            micro_container.write_placeholder(
+                os.path.join(
+                    os.path.dirname(os.path.realpath(__file__)), "micro_container"
+                )
+            )
         logo.gen_logo("top", "tt/logo/tt_logo_top.gds")
         logo.gen_lef("top", "tt/logo/tt_logo_top.lef")
         logo.gen_logo("bottom", "tt/logo/tt_logo_bottom.gds")
