@@ -325,11 +325,24 @@ def make_groups(project_dir: str, micro_projects, shuttle_id: str, repo_url: str
     import json
     import shutil
 
-    # Group directories are generated: start from scratch
+    # Container directories are generated: start from scratch, but keep the layout, LEF and
+    # netlist that assemble() wrote for a container whose micro tiles are still the same
+    # (every configure.py command gets here, also the ones that run after --copy-macros)
+    assembled = {}
     for entry in sorted(os.listdir(project_dir)):
-        marker = os.path.join(project_dir, entry, "commit_id.json")
+        group_dir = os.path.join(project_dir, entry)
+        marker = os.path.join(group_dir, "commit_id.json")
         if os.path.exists(marker) and json.load(open(marker)).get(GROUP_MARKER):
-            shutil.rmtree(os.path.join(project_dir, entry))
+            with open(os.path.join(group_dir, "subprojects.json")) as f:
+                old_members = [p["macro"] for p in json.load(f)["projects"].values()]
+            keep = [f"{entry}.{ext}" for ext in ("gds", "oas", "lef", "v")]
+            assembled[entry] = (old_members, keep)
+            for item in os.listdir(group_dir):
+                path = os.path.join(group_dir, item)
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                elif item not in keep:
+                    os.remove(path)
 
     micro_projects = sorted(micro_projects, key=lambda p: p.sort_id)
     groups = []
@@ -340,7 +353,12 @@ def make_groups(project_dir: str, micro_projects, shuttle_id: str, repo_url: str
             # TODO: fill the empty slots with a filler micro tile (outputs tied low)
             raise NotImplementedError(f"{name} has {len(members)} micro tiles: filler micro tiles are not implemented")
         group_dir = os.path.join(project_dir, name)
-        os.makedirs(os.path.join(group_dir, "docs"))
+        os.makedirs(os.path.join(group_dir, "docs"), exist_ok=True)
+        old_members, keep = assembled.pop(name, ([], []))
+        if old_members != [m.info.top_module for m in members]:
+            for item in keep:
+                if os.path.exists(os.path.join(group_dir, item)):
+                    os.remove(os.path.join(group_dir, item))
 
         subprojects = {}
         rows = []
@@ -400,6 +418,10 @@ def make_groups(project_dir: str, micro_projects, shuttle_id: str, repo_url: str
             )
             f.write("\n")
         groups.append((name, members))
+
+    # Containers that no longer exist
+    for name in assembled:
+        shutil.rmtree(os.path.join(project_dir, name))
 
     with open(os.path.join(project_dir, "groups.json"), "w") as f:
         json.dump({"shuttle": shuttle_id, "groups": [name for name, _ in groups]}, f, indent=2)
