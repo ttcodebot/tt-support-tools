@@ -1,0 +1,222 @@
+VERSION 5.7 ;
+  NOWIREEXTENSIONATPIN ON ;
+  DIVIDERCHAR "/" ;
+  BUSBITCHARS "[]" ;
+MACRO tt_micro_slot
+  CLASS BLOCK ;
+  FOREIGN tt_micro_slot ;
+  ORIGIN 0.000 0.000 ;
+  SIZE 151.200 BY 66.640 ;
+  PIN VGND
+    DIRECTION INOUT ;
+    USE GROUND ;
+    PORT
+      LAYER Metal2 ;
+        RECT 39.480 3.620 41.080 63.020 ;
+    END
+    PORT
+      LAYER Metal2 ;
+        RECT 111.720 3.620 113.320 63.020 ;
+    END
+    PORT
+      LAYER Metal3 ;
+        RECT 3.360 19.080 147.840 20.680 ;
+    END
+    PORT
+      LAYER Metal3 ;
+        RECT 3.360 49.320 147.840 50.920 ;
+    END
+  END VGND
+  PIN VPWR
+    DIRECTION INOUT ;
+    USE POWER ;
+    PORT
+      LAYER Metal2 ;
+        RECT 37.320 3.620 38.920 63.020 ;
+    END
+    PORT
+      LAYER Metal2 ;
+        RECT 109.560 3.620 111.160 63.020 ;
+    END
+    PORT
+      LAYER Metal3 ;
+        RECT 3.360 15.720 147.840 17.320 ;
+    END
+    PORT
+      LAYER Metal3 ;
+        RECT 3.360 45.960 147.840 47.560 ;
+    END
+  END VPWR
+  PIN clk
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 4.610 151.200 4.910 ;
+    END
+  END clk
+  PIN rst_n
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 7.970 151.200 8.270 ;
+    END
+  END rst_n
+  PIN ui_in[0]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 11.330 151.200 11.630 ;
+    END
+  END ui_in[0]
+  PIN ui_in[1]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 14.690 151.200 14.990 ;
+    END
+  END ui_in[1]
+  PIN ui_in[2]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 18.050 151.200 18.350 ;
+    END
+  END ui_in[2]
+  PIN ui_in[3]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 21.410 151.200 21.710 ;
+    END
+  END ui_in[3]
+  PIN ui_in[4]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 24.770 151.200 25.070 ;
+    END
+  END ui_in[4]
+  PIN ui_in[5]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 28.130 151.200 28.430 ;
+    END
+  END ui_in[5]
+  PIN ui_in[6]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 31.490 151.200 31.790 ;
+    END
+  END ui_in[6]
+  PIN ui_in[7]
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    ANTENNAGATEAREA 0.396000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 34.850 151.200 35.150 ;
+    END
+  END ui_in[7]
+  PIN uo_out[0]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 38.210 151.200 38.510 ;
+    END
+  END uo_out[0]
+  PIN uo_out[1]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 41.570 151.200 41.870 ;
+    END
+  END uo_out[1]
+  PIN uo_out[2]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 44.930 151.200 45.230 ;
+    END
+  END uo_out[2]
+  PIN uo_out[3]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 48.290 151.200 48.590 ;
+    END
+  END uo_out[3]
+  PIN uo_out[4]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 51.650 151.200 51.950 ;
+    END
+  END uo_out[4]
+  PIN uo_out[5]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 55.010 151.200 55.310 ;
+    END
+  END uo_out[5]
+  PIN uo_out[6]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 58.370 151.200 58.670 ;
+    END
+  END uo_out[6]
+  PIN uo_out[7]
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    ANTENNADIFFAREA 0.361000 ;
+    PORT
+      LAYER Metal3 ;
+        RECT 150.200 61.730 151.200 62.030 ;
+    END
+  END uo_out[7]
+  OBS
+      LAYER Metal1 ;
+        RECT 0.000 0.000 151.200 66.640 ;
+      LAYER Metal2 ;
+        RECT 0.000 0.000 151.200 66.640 ;
+      LAYER Metal3 ;
+        RECT 0.000 0.000 151.200 66.640 ;
+  END
+END tt_micro_slot
+END LIBRARY
+

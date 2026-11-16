@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -207,6 +208,17 @@ def parse_def(template_def: str) -> DefTemplate:
     )
 
 
+def lef_interface(lef: str) -> str:
+    """The pin section of the (only) macro of a LEF file, without its name and antenna annotations."""
+    with open(lef) as f:
+        text = f.read()
+    name = re.search(r"^MACRO (\S+)", text, flags=re.M).group(1)
+    start = text.index(f"MACRO {name}")
+    end = text.index("  OBS") if "  OBS" in text else text.index(f"END {name}")
+    body = text[start:end].replace(name, "MACRO_NAME")
+    return re.sub(r"^\s*ANTENNA.*\n", "", body, flags=re.M)
+
+
 def pin_check(
     gds: str,
     lef: str,
@@ -225,6 +237,19 @@ def pin_check(
 
     # parse template def
     template = parse_def(template_def)
+
+    if is_micro:
+        # Micro tile containers are assembled without place and route, so the pins
+        # and the power stripes of a micro tile have to be exactly those of the
+        # placeholder that the generic container was hardened with.
+        slot_lef = os.path.join(
+            os.path.dirname(template_def), "..", "micro", "tt_micro_slot.lef"
+        )
+        if os.path.exists(slot_lef):
+            if lef_interface(lef) != lef_interface(slot_lef):
+                raise PrecheckFailure(
+                    "The pins or power stripes in the LEF differ from the micro tile template"
+                )
 
     # parse pins from user lef
     # lef syntax: https://coriolis.lip6.fr/doc/lefdef/lefdefref/LEFSyntax.html
