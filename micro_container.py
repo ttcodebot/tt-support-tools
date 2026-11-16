@@ -47,8 +47,10 @@ INPUT_GATE_AREA = 0.126
 # Free space above and below a pin inside the pin strip, on the pin layer: room for a via3
 # enclosure that overhangs the 0.3 um pin (up to 0.04 um) plus the met3 spacing (0.3 um)
 PIN_CLEARANCE = 0.45
-# Largest met3 enclosure of a via3 (M3M4_PR: 0.38 x 0.32 um, M3M4_PR_R: 0.32 x 0.38 um)
-PAD_SIZE = 0.38
+# Met3 enclosure of the via3 the container lands on a pin (M3M4_PR_R: 0.32 x 0.38 um), and
+# its distance to the micro tile's interior / to the slot edge (met3 spacing)
+PAD = (0.32, 0.38)
+PAD_GAP = 0.3
 # Locations and orientations of the four slots in the 1x1 container, in select order
 SLOTS = [((0.0, 0.0), "N"), ((90.62, 0.0), "FN"), ((0.0, 51.68), "N"), ((90.62, 51.68), "FN")]
 
@@ -100,14 +102,17 @@ def template_interface():
 
 
 def slot_pin(r):
-    """The slot's view of a pin: as tall as the largest via pad of the layer above, so that the
-    router can land a via inside it (it only accepts vias whose enclosure is inside a macro
-    pin). The real pin is thinner: a pad then overhangs it by at most (PAD_SIZE - pin) / 2."""
+    """The slot's view of a pin: an access box exactly the size of a via3 pad (PAD), inside the
+    pin's x range and PAD_GAP away from the micro tile's interior. The router only places a via
+    on a macro pin if the via's enclosure is inside the pin shape, and pin access analysis does
+    not see the container's ROUTING_OBSTRUCTIONS, so the box and the obstruction around it
+    (write_placeholder) are what leave a via from above as the only way in. The real pin is
+    0.3 um tall: the pad overhangs it by (PAD[1] - 0.3) / 2 = 0.04 um at top and bottom."""
     x1, y1, x2, y2 = r
-    if y2 - y1 >= PAD_SIZE:
-        return r
     cy = (y1 + y2) / 2
-    return (x1, round(cy - PAD_SIZE / 2, 3), x2, round(cy + PAD_SIZE / 2, 3))
+    bx = x1 + PAD_GAP
+    assert bx + PAD[0] + PAD_GAP <= x2 + 1e-9, "pin too short for a via pad and its spacing"
+    return (round(bx, 3), round(cy - PAD[1] / 2, 3), round(bx + PAD[0], 3), round(cy + PAD[1] / 2, 3))
 
 
 def write_placeholder(out_dir: str):
@@ -154,25 +159,28 @@ def write_placeholder(out_dir: str):
     # container's metal and the micro tile's metal are in one piece only once the layer above
     # the pin is etched, and the micro tile has no metal on that layer. Below that layer, a
     # piece of a net is either the micro tile's or the container's, as in their own checks.
-    # - pin layer: the obstruction keeps PIN_CLEARANCE away from the pins inside the strip, so
-    #   that a via enclosure that overhangs a pin is legal; a wire on the pin layer cannot reach a
-    #   pin from outside the slot because of the container's ROUTING_OBSTRUCTIONS next to the
-    #   slot edge (config.json);
-    # - layer below the pin: obstructed under the pins, so no via can land on a pin from below.
+    # - pin layer: the LEF pin is a via-pad-sized access box (slot_pin); the obstruction leaves
+    #   room around it for the via enclosure (PIN_CLEARANCE above and below) and blocks the rest
+    #   of the strip, including the PAD_GAP between the box and the slot edge, so that no wire on
+    #   the pin layer can reach a pin (the router keeps its spacing to obstructions);
+    # - layer below the pin: obstructed around the pins, so no via can land on a pin from below.
     strip_x = min(p[3][0] for p in pins)
     inner = pya.Region(pya.DBox(0, 0, strip_x, height).to_itype(dbu))
     pin_layer = pins[0][2]
     below_pin = OBS_LAYERS[OBS_LAYERS.index(pin_layer) - 1]
-    pin_boxes = pya.Region()
+    pin_rows = pya.Region()
+    pin_keep = pya.Region()
     for p in pins:
         x1, y1, x2, y2 = p[3]
-        pin_boxes.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, x2, y2 + PIN_CLEARANCE).to_itype(dbu))
+        pin_rows.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, x2, y2 + PIN_CLEARANCE).to_itype(dbu))
+        access = slot_pin(p[3])
+        pin_keep.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, access[2] + PAD_GAP, y2 + PIN_CLEARANCE).to_itype(dbu))
     for layer in OBS_LAYERS:
         obs = inner
         if layer == below_pin:
-            obs = inner + pin_boxes
+            obs = inner + pin_rows
         if layer == power_layer or any(p[2] == layer for p in pins):
-            keep = pin_boxes.dup()
+            keep = pin_keep.dup()
             for r in [s for net in stripes.values() for s in net]:
                 keep.insert(pya.DBox(*r).to_itype(dbu))
             obs = outline - keep
@@ -189,7 +197,7 @@ def write_placeholder(out_dir: str):
     layout.dbu = dbu
     cell = layout.create_cell(SLOT)
     cell.shapes(layout.layer(*PRBOUNDARY)).insert(pya.DBox(0, 0, width, height))
-    shapes = [(name, layer, slot_pin(r)) for name, _, layer, r in pins]
+    shapes = [(name, layer, r) for name, _, layer, r in pins]
     shapes += [(net, power_layer, s) for net in stripes for s in stripes[net]]
     for name, layer, r in shapes:
         drawing, pin, label = LAYER_GDS[layer]
