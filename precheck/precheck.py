@@ -14,6 +14,7 @@ import klayout.db as pya
 import klayout.rdb as rdb
 import yaml
 from klayout_tools import parse_lyp_layers
+from micro_check import micro_container_interface_check
 from pin_check import parse_def, pin_check
 from precheck_failure import PrecheckFailure
 from tech_data import (
@@ -583,6 +584,16 @@ def main():
             "check": lambda: verilog_syntax_check(verilog_file),
         },
     ]
+    if is_micro:
+        checks.append(
+            {
+                "name": "Micro tile container interface",
+                "check": lambda: micro_container_interface_check(
+                    gds_file, lef_file, top_module, tech, load_layers(tech)
+                ),
+                "techs": ["sky130A", "gf180mcuD"],
+            }
+        )
 
     testsuite = ET.Element("testsuite", name="Tiny Tapeout Prechecks")
     error_count = 0
