@@ -32,9 +32,15 @@ SLOTS_PER_CONTAINER = 4
 # Signal ports of a micro tile, in the order of the DEF template
 INPUT_PORTS = ["clk", "rst_n"] + [f"ui_in[{i}]" for i in range(8)]
 OUTPUT_PORTS = [f"uo_out[{i}]" for i in range(8)]
-# Worst case antenna annotations of the placeholder pins: the smallest gate and
-# the smallest diffusion of the standard cell library
-SLOT_ANTENNA = {"gf180mcuD": {"gate": 0.396, "diff": 0.361}}
+# Worst case antenna annotations of the placeholder pins: inputs the smallest gate of the
+# standard cell library; outputs no diffusion (the container must protect its own gates on
+# micro tile outputs whatever drives them)
+SLOT_ANTENNA = {"gf180mcuD": {"gate": 0.396}}
+# Pin layer, the via layer above it (the only way in for the container), and the free space
+# around a pin in the pin strip on the pin layer (Metal3 spacing 0.28 + margin)
+PIN_ACCESS = {"gf180mcuD": ("Metal3", "Via3", 0.4)}
+# GDS layers of the pin layer: drawing, label
+PIN_GDS = {"gf180mcuD": ((42, 0), (42, 10))}
 # Layers a micro tile may use: the placeholder blocks all of them
 MICRO_LAYERS = {"gf180mcuD": ["Metal1", "Metal2", "Metal3"]}
 BOUNDARY_LAYER = {"gf180mcuD": (0, 0)}
@@ -68,27 +74,54 @@ def make_slot(reference_lef: str, out_dir: str, pdk: str):
             f"  PIN {port}\n    DIRECTION INPUT ;\n    USE SIGNAL ;\n",
             f"  PIN {port}\n    DIRECTION INPUT ;\n    USE SIGNAL ;\n    ANTENNAGATEAREA {antenna['gate']:.6f} ;\n",
         )
-    for port in OUTPUT_PORTS:
-        body = body.replace(
-            f"  PIN {port}\n    DIRECTION OUTPUT ;\n    USE SIGNAL ;\n",
-            f"  PIN {port}\n    DIRECTION OUTPUT ;\n    USE SIGNAL ;\n    ANTENNADIFFAREA {antenna['diff']:.6f} ;\n",
-        )
     if body.count("ANTENNAGATEAREA") != len(INPUT_PORTS):
         raise MicroTileError("unexpected pin format in the reference LEF")
+    # Antenna: the container may reach a signal pin only with a via from above (PIN_ACCESS),
+    # never with a wire on the pin layer or a via from below. Then the container's metal and
+    # the micro tile's metal join only when the layer above the pins is etched, where the micro
+    # tile has no metal, so the antenna result does not depend on the micro tile. The pin layer
+    # stays obstructed except for a box around each pin in the pin strip (which a micro tile
+    # keeps empty apart from its pins): room for the via enclosure. The layers below are
+    # obstructed everywhere, under the pins too. The container keeps its pin-layer wires away
+    # from the slot edge with ROUTING_OBSTRUCTIONS (gap narrower than a wire plus its spacing).
+    pin_layer, _, clearance = PIN_ACCESS[pdk]
+    pin_rects = []
+    for port in INPUT_PORTS + OUTPUT_PORTS:
+        section = re.search(rf"  PIN {re.escape(port)}\n(.*?)  END {re.escape(port)}\n", body, re.S).group(1)
+        for layer, r in re.findall(r"LAYER (\S+) ;\s+RECT ([\d. ]+) ;", section):
+            if layer != pin_layer:
+                raise MicroTileError(f"pin {port} is not on {pin_layer}")
+            pin_rects.append(tuple(float(v) for v in r.split()))
+    strip_x = min(r[0] for r in pin_rects)
+    dbu = 0.001
+    keep = pya.Region()
+    for x1, y1, x2, y2 in pin_rects:
+        keep.insert(pya.DBox(strip_x, y1 - clearance, x2, y2 + clearance).to_itype(dbu))
     obs = "  OBS\n"
     for layer in MICRO_LAYERS[pdk]:
-        obs += f"      LAYER {layer} ;\n        RECT 0.000 0.000 {width:.3f} {height:.3f} ;\n"
+        obs += f"      LAYER {layer} ;\n"
+        region = pya.Region(pya.DBox(0, 0, width, height).to_itype(dbu))
+        if layer == pin_layer:
+            region -= keep
+        for box in region.decompose_trapezoids_to_region().each():
+            b = box.bbox().to_dtype(dbu)
+            obs += f"        RECT {b.left:.3f} {b.bottom:.3f} {b.right:.3f} {b.top:.3f} ;\n"
     obs += "  END\n"
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, f"{SLOT_MACRO}.lef"), "w") as f:
         f.write(header + body + obs + f"END {SLOT_MACRO}\nEND LIBRARY\n\n")
 
-    # Layout: only the outline. The real micro tile replaces it at assembly time.
+    # Layout: the outline and the signal pins (the container's via pads land on them and are
+    # below the minimum metal area on their own). The real micro tile replaces it at assembly.
     layout = pya.Layout()
     layout.dbu = 0.001
     cell = layout.create_cell(SLOT_MACRO)
     layer = layout.layer(*BOUNDARY_LAYER[pdk])
     cell.shapes(layer).insert(pya.DBox(0, 0, width, height))
+    pin_gds, label_gds = PIN_GDS[pdk]
+    for port, (x1, y1, x2, y2) in zip(INPUT_PORTS + OUTPUT_PORTS, pin_rects):
+        cell.shapes(layout.layer(*pin_gds)).insert(pya.DBox(x1, y1, x2, y2))
+        cell.shapes(layout.layer(*label_gds)).insert(pya.DText(port, (x1 + x2) / 2, (y1 + y2) / 2))
     layout.write(os.path.join(out_dir, f"{SLOT_MACRO}.gds"))
 
     with open(os.path.join(out_dir, f"{SLOT_MACRO}.v"), "w") as f:
