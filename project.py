@@ -619,7 +619,26 @@ class Project:
         # GL netlist
         gl_type = self.tech.netlist_type
         gl_file = os.path.join(final_dir, gl_type, f"{top_module}.{gl_type}.v")
-        shutil.copyfile(gl_file, os.path.join(tt_submission_dir, f"{top_module}.v"))
+        submission_gl_file = os.path.join(tt_submission_dir, f"{top_module}.v")
+        shutil.copyfile(gl_file, submission_gl_file)
+
+        # A project that instantiates hardened macros (such as a micro tile container)
+        # ships their netlists in the same file, so that the gate level netlist of the
+        # project is complete for everyone who simulates it later.
+        with open(os.path.join(run_dir, "resolved.json")) as f:
+            macros = json.load(f).get("MACROS") or {}
+        with open(submission_gl_file, "a") as f:
+            for macro_name, macro in macros.items():
+                netlists = macro.get(gl_type) or macro.get("nl") or []
+                if isinstance(netlists, str):
+                    netlists = [netlists]
+                if not netlists:
+                    logging.warning(f"no netlist for macro {macro_name}")
+                for netlist in netlists:
+                    logging.info(f"Appending the netlist of macro {macro_name}")
+                    with open(netlist) as macro_file:
+                        f.write(f"\n// Macro: {macro_name}\n")
+                        f.write(macro_file.read())
 
         # Stats:
         shutil.copyfile(
