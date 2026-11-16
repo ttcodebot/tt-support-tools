@@ -222,6 +222,7 @@ def assemble(
     pdk: str,
     shuttle: str = "",
     slot_lef_file: Optional[str] = None,
+    write_gds: bool = False,
 ):
     """Builds the container `name` in out_dir from the generic container and four micro tiles."""
     with open(os.path.join(container_dir, "info.yaml")) as f:
@@ -268,7 +269,8 @@ def assemble(
     top.name = name
     layout.set_property("TT_PDK", pdk)
     layout.write(os.path.join(out_dir, f"{name}.oas"))
-    layout.write(os.path.join(out_dir, f"{name}.gds"))
+    if write_gds:
+        layout.write(os.path.join(out_dir, f"{name}.gds"))
 
     # LEF: the abstract of the generic container under the new name
     with open(os.path.join(container_dir, f"{generic}.lef")) as f:
@@ -458,7 +460,15 @@ def main():
         make_slot(args.lef, args.out, args.pdk)
     else:
         tiles = [None if tile == "-" else tile for tile in args.tiles]
-        assemble(args.container, args.name, args.out, tiles, args.pdk, args.shuttle)
+        assemble(
+            args.container,
+            args.name,
+            args.out,
+            tiles,
+            args.pdk,
+            args.shuttle,
+            write_gds=True,
+        )
 
 
 if __name__ == "__main__":
