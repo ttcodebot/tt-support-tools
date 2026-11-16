@@ -89,7 +89,25 @@ class Docs:
         elif tapeout_index_path is None:
             logging.warning("tapeout index not provided, using project list")
             self.projects.sort(key=lambda x: x.mux_address)
-            tapeout_index = map(DocsHelper.normalise_project_info, self.projects)
+            tapeout_index = []
+            for project in self.projects:
+                entry = DocsHelper.normalise_project_info(project)
+                # A micro tile container is a group: its micro tiles come first, as
+                # subtiles (they are written out when the group is reached)
+                micro_tiles = getattr(project, "micro_tiles", [])
+                for subtile_addr, micro_tile in enumerate(micro_tiles):
+                    subtile = DocsHelper.normalise_project_info(micro_tile)
+                    subtile.update(
+                        {
+                            "type": "subtile",
+                            "subtile_addr": subtile_addr,
+                            "subtile_group": project.info.top_module,
+                        }
+                    )
+                    tapeout_index.append(subtile)
+                if micro_tiles:
+                    entry["type"] = "group"
+                tapeout_index.append(entry)
 
         datasheet_content_config = None
         if "datasheet_config" in self.config:

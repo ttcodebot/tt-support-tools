@@ -156,6 +156,7 @@ class ShuttleConfig:
                 # The micro tiles of a container share its mux address. The select value
                 # (uio_in) of each is its position in the group.
                 for subtile_addr, micro_tile in enumerate(micro_tiles):
+                    micro_tile.mux_address = mux_address
                     project_index.append(
                         {
                             "macro": micro_tile.info.top_module,
