@@ -25,6 +25,12 @@
   "FP_IO_VLENGTH": 2,
   "GRT_ALLOW_CONGESTION": 1,
   "DESIGN_REPAIR_BUFFER_OUTPUT_PORTS": 0,
+
+  "//": "Antenna: OpenROAD's met3/met4 thickness (tech LEF 0.8 um) is 5 % below Magic's (0.845 um) and the",
+  "//": "post-route check has no margin; repair with 25 % margin so that the container is also Magic-clean",
+  "//": "with nothing behind the slot pins (the worst case for every micro tile)",
+  "GRT_ANTENNA_REPAIR_MARGIN": 25,
+  "DRT_ANTENNA_REPAIR_MARGIN": 25,
   "RUN_CTS": 1,
   "RUN_KLAYOUT_XOR": 0,
   "RUN_KLAYOUT_DRC": 0,

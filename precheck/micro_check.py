@@ -18,8 +18,10 @@ import klayout.db as pya
 from precheck_failure import PrecheckFailure
 
 STRIP_WIDTH = 1.0
-PIN_TOLERANCE = 0.05
-EDGE_TOLERANCE = 0.02
+# Wire ends that land on a pin may be a little wider than the pin, and cell or wire edges may
+# poke into the strip: allowed within EDGE_TOLERANCE of the strip's inner edge only. The
+# container's via pads keep 0.3 um (met3 spacing) + EDGE_TOLERANCE from that edge.
+EDGE_TOLERANCE = 0.05
 # Routing layers of a micro tile (the last one carries the pins)
 MICRO_ROUTING_LAYERS = {
     "sky130A": ["li1.drawing", "met1.drawing", "met2.drawing", "met3.drawing"],
@@ -56,12 +58,10 @@ def micro_container_interface_check(gds: str, lef: str, toplevel: str, tech: str
     layout = pya.Layout()
     layout.read(gds)
     top = layout.cell(toplevel)
-    # Tolerances: wire ends that land on a pin may be a little wider than the pin, and cell or
-    # wire edges may poke into the strip by a grid step or two.
     strip = pya.Region(pya.DBox(width - STRIP_WIDTH + EDGE_TOLERANCE, 0, width, height).to_itype(layout.dbu))
     pin_region = pya.Region()
     for box in pins:
-        pin_region.insert(box.enlarged(PIN_TOLERANCE, PIN_TOLERANCE).to_itype(layout.dbu))
+        pin_region.insert(box.to_itype(layout.dbu))
     for layer_name in MICRO_ROUTING_LAYERS[tech]:
         info = layers[layer_name]
         index = layout.find_layer(info.layer, info.data_type)

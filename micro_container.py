@@ -51,7 +51,7 @@ PIN_CLEARANCE = 0.45
 # Met3 enclosure of the via3 the container lands on a pin (M3M4_PR_R: 0.32 x 0.38 um), and
 # its distance to the micro tile's interior / to the slot edge (met3 spacing)
 PAD = (0.32, 0.38)
-PAD_GAP = 0.3
+PAD_GAP = 0.35  # 0.3 (met3 spacing) + 0.05 for wire ends next to a pin (see precheck/micro_check.py)
 # The tools draw the via3 on every pin (pin_stack) and the slot's pins are met4 stubs, instead of
 # letting the router find a via access point on a met3 pin (slot_pin)
 PIN_VIA_STACK = True
@@ -214,8 +214,9 @@ def write_placeholder(out_dir: str):
     for p in pins:
         x1, y1, x2, y2 = p[3]
         pin_rows.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, x2, y2 + PIN_CLEARANCE).to_itype(dbu))
-        access = slot_pin(p[3])
-        pin_keep.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, access[2] + PAD_GAP, y2 + PIN_CLEARANCE).to_itype(dbu))
+        if not PIN_VIA_STACK:
+            access = slot_pin(p[3])
+            pin_keep.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, access[2] + PAD_GAP, y2 + PIN_CLEARANCE).to_itype(dbu))
     if PIN_VIA_STACK:
         # the tools' jumper is the only way to a pin: the pin layer is obstructed all over except
         # around the landing pads (the router's pins), which keep the met3 spacing to the rest
