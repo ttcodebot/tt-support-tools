@@ -293,7 +293,26 @@ class GF180MCUDTech(Tech):
             ],
         },
     }
-    micro_librelane_config = {}
+    micro_librelane_config = {
+        # A micro tile uses Metal1 to Metal3 (Metal1 is not usable for routing);
+        # Metal4 belongs to the container, whose vertical Metal4 power stripes
+        # cross the horizontal Metal3 stripes below
+        "RT_MAX_LAYER": "Metal3",
+        "PDN_MULTILAYER": True,
+        # Two pairs of Metal2 stripes tie the Metal1 rails together: standard
+        # cells cannot be placed under them, so they leave room for wide cells
+        "PDN_VERTICAL_LAYER": "Metal2",
+        "PDN_VWIDTH": 1.6,
+        "PDN_VSPACING": 0.56,
+        "PDN_VPITCH": 72.24,
+        "PDN_VOFFSET": 34.76,
+        # The power pins that the container connects to
+        "PDN_HORIZONTAL_LAYER": "Metal3",
+        "PDN_HWIDTH": 1.6,
+        "PDN_HSPACING": 1.76,
+        "PDN_HPITCH": 30.24,
+        "PDN_HOFFSET": 12.6,
+    }
     label_layers = [
         # TODO: add label layers
     ]
