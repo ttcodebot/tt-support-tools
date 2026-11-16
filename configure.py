@@ -263,6 +263,12 @@ if __name__ == "__main__":
         const=True,
     )
     parser.add_argument(
+        "--assemble-micro-containers",
+        help="assemble the micro tile containers from the hardened generic container (also done by --copy-macros)",
+        action="store_const",
+        const=True,
+    )
+    parser.add_argument(
         "--copy-final-results",
         help="copy final project files to gds/lef directories",
         action="store_const",
@@ -372,6 +378,9 @@ if __name__ == "__main__":
         logo.gen_lef("bottom", "tt/logo/tt_logo_bottom.lef")
         if not args.test:
             docs.build_index()
+
+    if args.assemble_micro_containers:
+        shuttle.assemble_micro_containers()
 
     if args.copy_macros:
         shuttle.copy_macros()

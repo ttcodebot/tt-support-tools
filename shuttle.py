@@ -258,9 +258,9 @@ class ShuttleConfig:
             f"tt-multiplexer/ol2/tt_top/verilog/{name}.v",
         )
 
-    def copy_macros(self):
-        # Micro tile containers: swap the placeholders of the hardened generic container
-        # for the micro tiles of every group. No place and route.
+    def assemble_micro_containers(self):
+        """Micro tile containers: swap the placeholders of the hardened generic container
+        for the micro tiles of every group. No place and route."""
         for project in self.projects:
             micro_tiles = getattr(project, "micro_tiles", [])
             if micro_tiles:
@@ -273,6 +273,8 @@ class ShuttleConfig:
                     [m.local_dir for m in micro_tiles],
                 )
 
+    def copy_macros(self):
+        self.assemble_micro_containers()
         logging.info("copying macros to tt_top:")
         copy_print_glob("projects/*/*.gds", "tt-multiplexer/ol2/tt_top/gds")
         # Convert .oas files to .gds
