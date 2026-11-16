@@ -74,3 +74,26 @@ def merge_dicts(a: dict, b: dict, path=[]):
         else:
             a[key] = b[key]
     return a
+
+
+# Deprecated names of the PDN_<name> variables that are not FP_PDN_<name>
+_OTHER_DEPRECATED_NAMES = {
+    "PDN_MULTILAYER": ["DESIGN_IS_CORE"],
+    "PDN_VERTICAL_LAYER": ["FP_PDN_LOWER_LAYER"],
+    "PDN_HORIZONTAL_LAYER": ["FP_PDN_UPPER_LAYER"],
+}
+
+
+def override_config(config: dict, overrides: dict):
+    """
+    Applies overrides to a LibreLane config. LibreLane reads the deprecated name of
+    a variable in preference to its current name, so the deprecated names of the
+    overriding keys are removed.
+    """
+    for key in overrides:
+        if key.startswith("PDN_"):
+            config.pop(f"FP_{key}", None)
+        for name in _OTHER_DEPRECATED_NAMES.get(key, []):
+            config.pop(name, None)
+    config.update(overrides)
+    return config

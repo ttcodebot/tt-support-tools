@@ -131,6 +131,10 @@ class ProjectInfo:
         self.analog_pins: int = analog_pins
         self.is_analog: bool = self.analog_pins > 0
 
+        self.is_micro: bool = project_section.get("tiles") == "micro"
+        if self.is_micro and self.is_analog:
+            errors.append("Micro tile projects cannot have analog pins")
+
         # "uses_3v3" is the legacy name for "uses_vapwr"; still accepted for compat.
         uses_vapwr: bool = project_section.get(
             "uses_vapwr", project_section.get("uses_3v3", False)
