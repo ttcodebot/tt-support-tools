@@ -44,6 +44,11 @@ OBS_LAYERS = ["li1", "met1", "met2", "met3"]
 # Output: no diffusion at all, as an output that is tied to a constant has none (tie cell), so
 # the container must protect the gates it connects to micro tile outputs by itself.
 INPUT_GATE_AREA = 0.126
+# Free space above and below a pin inside the pin strip, on the pin layer: room for a via3
+# enclosure that overhangs the 0.3 um pin (up to 0.04 um) plus the met3 spacing (0.3 um)
+PIN_CLEARANCE = 0.45
+# Largest met3 enclosure of a via3 (M3M4_PR: 0.38 x 0.32 um, M3M4_PR_R: 0.32 x 0.38 um)
+PAD_SIZE = 0.38
 # Locations and orientations of the four slots in the 1x1 container, in select order
 SLOTS = [((0.0, 0.0), "N"), ((90.62, 0.0), "FN"), ((0.0, 51.68), "N"), ((90.62, 51.68), "FN")]
 
@@ -86,6 +91,25 @@ def micro_tile_interface():
     return width, height, pins, layer, stripes
 
 
+def template_interface():
+    """What lef_interface() must return for every micro tile LEF."""
+    width, height, pins, power_layer, stripes = micro_tile_interface()
+    result = [(name, layer, tuple(round(v, 3) for v in r)) for name, _, layer, r in pins]
+    result += [(net, power_layer, tuple(round(v, 3) for v in s)) for net in stripes for s in stripes[net]]
+    return (width, height), sorted(result)
+
+
+def slot_pin(r):
+    """The slot's view of a pin: as tall as the largest via pad of the layer above, so that the
+    router can land a via inside it (it only accepts vias whose enclosure is inside a macro
+    pin). The real pin is thinner: a pad then overhangs it by at most (PAD_SIZE - pin) / 2."""
+    x1, y1, x2, y2 = r
+    if y2 - y1 >= PAD_SIZE:
+        return r
+    cy = (y1 + y2) / 2
+    return (x1, round(cy - PAD_SIZE / 2, 3), x2, round(cy + PAD_SIZE / 2, 3))
+
+
 def write_placeholder(out_dir: str):
     width, height, pins, power_layer, stripes = micro_tile_interface()
     os.makedirs(out_dir, exist_ok=True)
@@ -115,7 +139,7 @@ def write_placeholder(out_dir: str):
         lef += [
             "    PORT",
             f"      LAYER {layer} ;",
-            f"        {rect(r)}",
+            f"        {rect(slot_pin(r))}",
             "    END",
             f"  END {name}",
         ]
@@ -123,15 +147,33 @@ def write_placeholder(out_dir: str):
     dbu = 0.001
     outline = pya.Region(pya.DBox(0, 0, width, height).to_itype(dbu))
     # The pin strip at the east edge belongs to the container: a micro tile has nothing but
-    # its pins there. Only the pin layer is obstructed in the strip (between the pins).
+    # its pins there. Only the pin layer is obstructed in the strip, away from the pins.
+    #
+    # Antenna: the container may reach a pin only from above, with a via3 (PIN_ACCESS_LAYER)
+    # landing on it, never with a wire on the pin layer or a via from below. Then the
+    # container's metal and the micro tile's metal are in one piece only once the layer above
+    # the pin is etched, and the micro tile has no metal on that layer. Below that layer, a
+    # piece of a net is either the micro tile's or the container's, as in their own checks.
+    # - pin layer: the obstruction keeps PIN_CLEARANCE away from the pins inside the strip, so
+    #   that a via enclosure that overhangs a pin is legal; a wire on the pin layer cannot reach a
+    #   pin from outside the slot because of the container's ROUTING_OBSTRUCTIONS next to the
+    #   slot edge (config.json);
+    # - layer below the pin: obstructed under the pins, so no via can land on a pin from below.
     strip_x = min(p[3][0] for p in pins)
     inner = pya.Region(pya.DBox(0, 0, strip_x, height).to_itype(dbu))
+    pin_layer = pins[0][2]
+    below_pin = OBS_LAYERS[OBS_LAYERS.index(pin_layer) - 1]
+    pin_boxes = pya.Region()
+    for p in pins:
+        x1, y1, x2, y2 = p[3]
+        pin_boxes.insert(pya.DBox(strip_x, y1 - PIN_CLEARANCE, x2, y2 + PIN_CLEARANCE).to_itype(dbu))
     for layer in OBS_LAYERS:
         obs = inner
+        if layer == below_pin:
+            obs = inner + pin_boxes
         if layer == power_layer or any(p[2] == layer for p in pins):
-            obs = outline
-            keep = pya.Region()
-            for r in [s for net in stripes.values() for s in net] + [p[3] for p in pins if p[2] == layer]:
+            keep = pin_boxes.dup()
+            for r in [s for net in stripes.values() for s in net]:
                 keep.insert(pya.DBox(*r).to_itype(dbu))
             obs = outline - keep
         lef += [f"      LAYER {layer} ;"]
@@ -147,7 +189,7 @@ def write_placeholder(out_dir: str):
     layout.dbu = dbu
     cell = layout.create_cell(SLOT)
     cell.shapes(layout.layer(*PRBOUNDARY)).insert(pya.DBox(0, 0, width, height))
-    shapes = [(name, layer, r) for name, _, layer, r in pins]
+    shapes = [(name, layer, slot_pin(r)) for name, _, layer, r in pins]
     shapes += [(net, power_layer, s) for net in stripes for s in stripes[net]]
     for name, layer, r in shapes:
         drawing, pin, label = LAYER_GDS[layer]
@@ -243,8 +285,7 @@ def assemble(generic_final: str, top: str, out_dir: str, micro_dirs: List[str]):
     """Makes a container for the given micro tiles out of the hardened generic container."""
     assert len(micro_dirs) == len(SLOTS)
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(SCRIPT_DIR, "micro_container", f"{SLOT}.lef")) as f:
-        slot_interface = lef_interface(f.read())
+    slot_interface = template_interface()
 
     layout = pya.Layout()
     layout.read(os.path.join(generic_final, "gds", f"{GENERIC}.gds"))

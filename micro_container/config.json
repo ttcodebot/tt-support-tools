@@ -65,14 +65,18 @@
     "FP_PDN_VOFFSET": 7.36,
     "FP_PDN_VSPACING": 9.44,
 
-    "//": "li1 to met3 inside a slot belong to the micro tile, pins excepted (also in the slot LEF)",
+    "//": "li1 to met3 inside a slot belong to the micro tile, pins excepted (also in the slot LEF).",
+    "//": "Antenna: the container reaches a slot pin only with a via3 from met4. The met3 strips 0.3 um outside",
+    "//": "the slot edges leave a gap narrower than a met3 wire plus its spacing, so no met3 wire can touch a pin.",
     "ROUTING_OBSTRUCTIONS": [
       "met1 0 0 69.38 103.36",
       "met2 0 0 69.38 103.36",
       "met3 0 0 69.38 103.36",
       "met1 91.62 0 161 103.36",
       "met2 91.62 0 161 103.36",
-      "met3 91.62 0 161 103.36"
+      "met3 91.62 0 161 103.36",
+      "met3 70.68 0 70.98 103.36",
+      "met3 90.02 0 90.32 103.36"
     ]
   }
 }
