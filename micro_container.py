@@ -40,10 +40,10 @@ LAYER_GDS = {  # drawing, pin, label
 }
 PRBOUNDARY = (235, 4)
 OBS_LAYERS = ["li1", "met1", "met2", "met3"]
-# Worst case antenna properties of a micro tile pin: the smallest gate of the library on
-# an input, a small driver on an output
+# Worst case antenna properties of a micro tile pin. Input: the smallest gate of the library.
+# Output: no diffusion at all, as an output that is tied to a constant has none (tie cell), so
+# the container must protect the gates it connects to micro tile outputs by itself.
 INPUT_GATE_AREA = 0.126
-OUTPUT_DIFF_AREA = 0.3
 # Locations and orientations of the four slots in the 1x1 container, in select order
 SLOTS = [((0.0, 0.0), "N"), ((90.62, 0.0), "FN"), ((0.0, 51.68), "N"), ((90.62, 51.68), "FN")]
 
@@ -109,16 +109,10 @@ def write_placeholder(out_dir: str):
             lef += ["    PORT", f"      LAYER {power_layer} ;", f"        {rect(stripe)}", "    END"]
         lef += [f"  END {net}"]
     for name, direction, layer, r in pins:
-        antenna = (
-            f"    ANTENNAGATEAREA {INPUT_GATE_AREA:.6f} ;"
-            if direction == "INPUT"
-            else f"    ANTENNADIFFAREA {OUTPUT_DIFF_AREA:.6f} ;"
-        )
+        lef += [f"  PIN {name}", f"    DIRECTION {direction} ;", "    USE SIGNAL ;"]
+        if direction == "INPUT":
+            lef += [f"    ANTENNAGATEAREA {INPUT_GATE_AREA:.6f} ;"]
         lef += [
-            f"  PIN {name}",
-            f"    DIRECTION {direction} ;",
-            "    USE SIGNAL ;",
-            antenna,
             "    PORT",
             f"      LAYER {layer} ;",
             f"        {rect(r)}",
