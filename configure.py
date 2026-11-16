@@ -16,6 +16,7 @@ import yaml
 from config import Config
 from documentation import Docs, interactive_doc_checker
 from logo import LogoGenerator
+from micro_tiles import assemble_shuttle_containers
 from project import Project
 from rom import ROMFile
 from shuttle import ShuttleConfig
@@ -35,7 +36,13 @@ class Projects:
         only_projects = os.getenv("TT_ONLY_PROJECTS")
         only_projects_list = only_projects.split(",") if only_projects else None
 
+        # Micro tiles are not placed by the mux. They are grouped four at a time and
+        # each group is assembled into a container, which is an ordinary 1x1 project.
+        if args.update_shuttle and not args.test:
+            assemble_shuttle_containers(config)
+
         self.projects: List[Project] = []
+        self.micro_projects: List[Project] = []
         project_list = [
             entry
             for entry in os.listdir(self.project_dir)
@@ -83,6 +90,11 @@ class Projects:
             if args.update_shuttle:
                 project.check_ports(bool(config.get("powered_netlists", True)))
                 project.check_num_cells()
+
+            if project.info.is_micro:
+                # On the chip as part of a micro tile container
+                self.micro_projects.append(project)
+                continue
 
             self.projects.append(project)
 

@@ -83,8 +83,15 @@ class Docs:
             with open(os.path.abspath(tapeout_index_path), "r") as f:
                 index = json.load(f)
 
+            # The pages of the subtiles are written when their group comes up, so
+            # the subtiles have to come first, whatever their names are.
             tapeout_index = sorted(
-                index["projects"], key=lambda project: project["address"]
+                index["projects"],
+                key=lambda project: (
+                    project["address"],
+                    project.get("type") != "subtile",
+                    project.get("subtile_addr") or 0,
+                ),
             )
         elif tapeout_index_path is None:
             logging.warning("tapeout index not provided, using project list")
