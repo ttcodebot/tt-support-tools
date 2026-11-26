@@ -31,7 +31,7 @@ class Tech(Protocol):
     """ LibreLane configuration of a micro tile (tiles: micro), applied on top of librelane_config. Empty if the PDK has no micro tile.
     The micro tile routes up to the layer below project_top_metal_layer. Its horizontal power stripes on that layer are its power pins:
     the vertical power stripes of the container project, on project_top_metal_layer, cross them. """
-    micro_librelane_config: Dict[str, Union[bool, int, float, str]]
+    micro_librelane_config: Dict[str, Union[bool, int, float, str, List[str]]]
     """ These layers will be removed from the SVG render of the layout """
     label_layers: List[Tuple[int, int]]
     """ These layers are hardly visible and will also be removed from the SVG render of the layout """
@@ -97,6 +97,12 @@ class Sky130Tech(Tech):
         "PDN_HOFFSET": 6.8,
         # The PDK's synthesis exclusion list without the drive-strength-1 logic cells
         "SYNTH_EXCLUDED_CELL_FILE": "dir::../tt/tech/sky130A/micro_no_synth.cells",
+        # A micro tile has at most a few dozen flops within 65 um: one sink
+        # cluster and small clock buffers instead of a clkbuf_16 root
+        "CTS_SINK_CLUSTERING_SIZE": 64,
+        "CTS_SINK_CLUSTERING_MAX_DIAMETER": 120,
+        "CTS_ROOT_BUFFER": "sky130_fd_sc_hd__clkbuf_4",
+        "CTS_CLK_BUFFERS": ["sky130_fd_sc_hd__clkbuf_2", "sky130_fd_sc_hd__clkbuf_4"],
     }
     label_layers = [
         (64, 59),  # pwell.label
