@@ -45,6 +45,9 @@ class Docs:
             self.projects.sort(key=lambda x: x.mux_address)
             for project in self.projects:
                 fh.write(project.get_index_row())
+                for micro_tile in project.micro_tiles:
+                    if micro_tile is not None:
+                        fh.write(micro_tile.get_index_row())
 
     def update_image(self):
         ruby = os.path.join(self.script_dir, "caravel_template", "dump_pic.rb")
@@ -83,13 +86,28 @@ class Docs:
             with open(os.path.abspath(tapeout_index_path), "r") as f:
                 index = json.load(f)
 
-            tapeout_index = sorted(
-                index["projects"], key=lambda project: project["address"]
-            )
+            tapeout_index = index["projects"]
         elif tapeout_index_path is None:
             logging.warning("tapeout index not provided, using project list")
-            self.projects.sort(key=lambda x: x.mux_address)
-            tapeout_index = map(DocsHelper.normalise_project_info, self.projects)
+            tapeout_index = []
+            for project in self.projects:
+                tapeout_index.append(DocsHelper.normalise_project_info(project))
+                if project.micro_tiles:
+                    tapeout_index[-1]["type"] = "group"
+                for slot, micro_tile in enumerate(project.micro_tiles):
+                    if micro_tile is None:
+                        continue
+                    subtile = DocsHelper.normalise_project_info(micro_tile)
+                    subtile["type"] = "subtile"
+                    subtile["subtile_addr"] = slot
+                    subtile["subtile_group"] = project.info.top_module
+                    tapeout_index.append(subtile)
+
+        # The subtiles of a group are written right after the group, so they come first
+        tapeout_index = sorted(
+            tapeout_index,
+            key=lambda p: (p["address"], p.get("type") != "subtile"),
+        )
 
         datasheet_content_config = None
         if "datasheet_config" in self.config:
@@ -144,11 +162,12 @@ class Docs:
 
             # fetch info.yaml
             yaml_path = os.path.abspath(f"./projects/{project['macro']}/info.yaml")
-            if "type" in project:
-                if project["type"] == "subtile":
-                    yaml_path = os.path.abspath(
-                        f"./projects/{project['subtile_group']}/docs/{project['macro']}/info.yaml"
-                    )
+            if project.get("type") == "subtile":
+                # A subtile's files are in its group's docs (TTIHP25a) or, for a micro
+                # tile, in its own project directory
+                group_docs = DocsHelper.subtile_docs_dir(project)
+                if os.path.isdir(group_docs):
+                    yaml_path = os.path.abspath(os.path.join(group_docs, "info.yaml"))
 
             try:
                 with open(yaml_path, "r") as f:
@@ -198,8 +217,10 @@ class Docs:
                 datasheet_manifest.append(include_str)
 
                 # write subtile doc
-                for _, subtile_info in temp_subtile_projects.items():
-                    partial_doc_path = f"projects/{subtile_info['subtile_group']}/docs/{subtile_info['macro']}"
+                for _, subtile_info in sorted(temp_subtile_projects.items()):
+                    partial_doc_path = DocsHelper.subtile_docs_dir(subtile_info)
+                    if not os.path.isdir(partial_doc_path):
+                        partial_doc_path = f"projects/{subtile_info['macro']}/docs"
                     typ_path = os.path.join(partial_doc_path, "doc.typ")
                     md_path = os.path.join(partial_doc_path, "info.md")
 

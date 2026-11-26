@@ -258,6 +258,11 @@ class DocsHelper:
         return info
 
     @staticmethod
+    def subtile_docs_dir(info: dict) -> str:
+        """Docs directory of a subtile inside its group (TTIHP25a subtiles)."""
+        return f"projects/{info['subtile_group']}/docs/{info['macro']}"
+
+    @staticmethod
     def normalise_project_info(project) -> dict:
         """
         Similar to `DocHelper.format_project_info`, but this accepts a `Project` object and attempts to

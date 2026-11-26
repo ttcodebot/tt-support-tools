@@ -260,6 +260,8 @@ class Project:
 
     # docs stuff for index on README.md
     def get_index_row(self):
+        if self.micro_slot is not None:
+            return f"| {self.mux_address}/{self.micro_slot} | {self.info.author} | {self.info.title} | {self.get_project_type_string()} | {self.git_url} |\n"
         return f"| {self.mux_address} | {self.info.author} | {self.info.title} | {self.get_project_type_string()} | {self.git_url} |\n"
 
     def get_project_type_string(self):
