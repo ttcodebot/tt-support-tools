@@ -11,8 +11,10 @@ import sys
 from signal import SIG_DFL, SIGPIPE, signal
 from typing import Dict, List, TypedDict
 
+import git
 import yaml
 
+import micro_container
 from config import Config
 from documentation import Docs, interactive_doc_checker
 from logo import LogoGenerator
@@ -60,6 +62,10 @@ class Projects:
             if only_projects_list and project_id not in only_projects_list:
                 continue
 
+            # Micro tile containers are generated below, from the micro tile projects
+            if commit_id_data.get(micro_container.GROUP_MARKER, False):
+                continue
+
             project = Project(
                 index,
                 commit_id_data["repo"],
@@ -86,15 +92,63 @@ class Projects:
 
             self.projects.append(project)
 
+        # Micro tiles are not placed by the mux: they are grouped four at a time, and every
+        # group gets a container, which is an ordinary 1x1 project to the rest of the flow
+        self.micro_projects = [p for p in self.projects if p.info.is_micro]
+        self.projects = [p for p in self.projects if not p.info.is_micro]
+        if not args.test:
+            self.add_micro_containers()
+
         self.projects.sort(key=lambda x: x.sort_id)
 
-        all_macro_instances = [project.get_macro_name() for project in self.projects]
+        all_macro_instances = [
+            project.get_macro_name() for project in self.projects + self.micro_projects
+        ]
         self.assert_unique(all_macro_instances)
 
         all_gds_files = [project.get_macro_gds_filename() for project in self.projects]
         self.assert_unique(all_gds_files)
 
         logging.info(f"loaded {len(self.projects)} projects")
+
+    def add_micro_containers(self):
+        groups = micro_container.make_groups(self.micro_projects)
+        names = [micro_container.group_name(i) for i in range(len(groups))]
+        micro_container.remove_stale_groups(self.project_dir, names)
+        if not groups:
+            return
+        try:
+            micro_container.get_tech(self.config["pdk"])
+        except micro_container.MicroTileError as e:
+            logging.error(e)
+            exit(1)
+        repo = git.Repo(".")
+        repo_url = list(repo.remotes[0].urls)[0]
+        commit = repo.commit().hexsha
+        for index, members in enumerate(groups):
+            group_dir = micro_container.write_group_project(
+                self.project_dir, index, members, self.config["pdk"], repo_url, commit
+            )
+            project = Project(
+                len(self.projects) + len(self.micro_projects),
+                repo_url,
+                group_dir,
+                pdk=self.config["pdk"],
+                is_user_project=False,
+            )
+            project.commit_id = commit
+            project.sort_id = min(m.sort_id for m in members if m is not None)
+            project.post_clone_setup()
+            project.micro_tiles = members
+            for slot, member in enumerate(members):
+                if member is not None:
+                    member.micro_group = project.info.top_module
+                    member.micro_slot = slot
+            self.projects.append(project)
+            logging.info(
+                f"micro tile container {names[index]}: "
+                + ", ".join(m.info.top_module if m else "(filler)" for m in members)
+            )
 
     def assert_unique(self, check: List[str]):
         duplicates = [
@@ -223,6 +277,12 @@ if __name__ == "__main__":
         const=True,
     )
     parser.add_argument(
+        "--check-micro-containers",
+        help="DRC, LVS and antenna check of the assembled micro tile containers (needs magic, netgen and PDK_ROOT)",
+        action="store_const",
+        const=True,
+    )
+    parser.add_argument(
         "--copy-final-results",
         help="copy final project files to gds/lef directories",
         action="store_const",
@@ -318,6 +378,7 @@ if __name__ == "__main__":
 
     if args.update_shuttle:
         shuttle.configure_mux()
+        shuttle.assemble_micro_containers(bool(config.get("powered_netlists", True)))
         rom.write_rom()
         logo.gen_logo("top", "tt/logo/tt_logo_top.gds")
         logo.gen_lef("top", "tt/logo/tt_logo_top.lef")
@@ -325,6 +386,9 @@ if __name__ == "__main__":
         logo.gen_lef("bottom", "tt/logo/tt_logo_bottom.lef")
         if not args.test:
             docs.build_index()
+
+    if args.check_micro_containers:
+        shuttle.check_micro_containers()
 
     if args.copy_macros:
         shuttle.copy_macros()

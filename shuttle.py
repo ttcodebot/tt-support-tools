@@ -9,6 +9,7 @@ import git
 import klayout.db as pya
 import yaml
 
+import micro_container
 from config import Config
 from config_utils import merge_dicts
 from project import Project
@@ -39,6 +40,43 @@ def mux_id_to_xy(mux_id: int, total_mux_rows: int):
     x = (mux_id >> 1) & 1
     y = total_mux_rows // 2 - (2 * (mux_id & 1) - 1) * (mux_id >> 2) - (mux_id & 1)
     return x, y
+
+
+def micro_tile_index_entries(
+    container: Project, container_info: ShuttleIndexProject
+) -> List[ShuttleIndexProject]:
+    """Index entries of a micro tile container ("group") and its micro tiles ("subtile").
+    A micro tile has the address of its container; its subtile address is its slot, the
+    value of uio_in[1:0] that selects it."""
+    group: ShuttleIndexProject = {
+        **container_info,
+        "type": "group",
+        "subtile_addr_bits": micro_container.SELECT_BITS,
+        "micro_tiles": [
+            m.info.top_module if m is not None else None for m in container.micro_tiles
+        ],
+    }
+    entries = [group]
+    for slot, micro_tile in enumerate(container.micro_tiles):
+        if micro_tile is None:
+            continue
+        micro_tile.mux_address = container_info["address"]
+        entries.append(
+            {
+                "macro": micro_tile.info.top_module,
+                "address": container_info["address"],
+                "x": container_info["x"],
+                "y": container_info["y"],
+                "tiles": micro_tile.info.tiles,
+                "repo": micro_tile.git_url,
+                "commit": micro_tile.commit_id,
+                "type": "subtile",
+                "subtile_addr": slot,
+                "subtile_addr_bits": micro_container.SELECT_BITS,
+                "subtile_group": container_info["macro"],
+            }
+        )
+    return entries
 
 
 class ShuttleConfig:
@@ -145,7 +183,10 @@ class ShuttleConfig:
                 if len(module["analog"]) > 0:
                     project_info["analog_pins"] = project.analog_pins
 
-                project_index.append(project_info)
+                if project.micro_tiles:
+                    project_index += micro_tile_index_entries(project, project_info)
+                else:
+                    project_index.append(project_info)
                 mux_index_reverse[module_name] = mux_address
 
         for project in self.projects:
@@ -175,6 +216,93 @@ class ShuttleConfig:
                 includes_file.write(
                     f"$(USER_PROJECT_VERILOG)/../projects/{project.info.top_module}/{project.info.top_module}.v\n"
                 )
+                if None in project.micro_tiles:
+                    includes_file.write(
+                        f"$(USER_PROJECT_VERILOG)/../projects/{project.info.top_module}/{micro_container.FILLER}.v\n"
+                    )
+                for micro_tile in project.micro_tiles:
+                    if micro_tile is not None:
+                        name = micro_tile.info.top_module
+                        includes_file.write(
+                            f"$(USER_PROJECT_VERILOG)/../projects/{name}/{name}.v\n"
+                        )
+
+    def micro_containers(self) -> List[Project]:
+        return [p for p in self.projects if p.micro_tiles]
+
+    def assemble_micro_containers(self, include_power_ports: bool):
+        """Makes the layout, LEF and netlist of every micro tile container from the frozen
+        generic container and the layouts of its micro tiles (no place and route)."""
+        pdk = self.config["pdk"]
+        failed = False
+        for container in self.micro_containers():
+            for micro_tile in container.micro_tiles:
+                if micro_tile is None:
+                    continue
+                errors = micro_container.check_micro_tile(
+                    pdk, micro_tile.local_dir, micro_tile.info.top_module
+                )
+                for error in errors:
+                    logging.error(f"{micro_tile} {micro_tile.info.top_module}: {error}")
+                failed = failed or bool(errors)
+        if failed:
+            logging.error("some micro tiles do not fit the micro tile container")
+            exit(1)
+        for container in self.micro_containers():
+            name = container.info.top_module
+            logging.info(f"assembling micro tile container {name}:")
+            try:
+                micro_container.assemble(
+                    pdk,
+                    name,
+                    container.local_dir,
+                    [
+                        (m.local_dir, m.info.top_module) if m is not None else None
+                        for m in container.micro_tiles
+                    ],
+                )
+            except micro_container.MicroTileError as e:
+                logging.error(f"{name}: {e}")
+                exit(1)
+            container.check_ports(include_power_ports)
+
+    def check_micro_containers(self):
+        """DRC, LVS and antenna check of every assembled micro tile container."""
+        failed = []
+        for container in self.micro_containers():
+            name = container.info.top_module
+            netlists = [os.path.join(container.local_dir, f"{name}.v")]
+            for micro_tile in container.micro_tiles:
+                if micro_tile is None:
+                    netlist = os.path.join(
+                        container.local_dir, f"{micro_container.FILLER}.v"
+                    )
+                else:
+                    netlist = micro_tile.get_gl_path()
+                if netlist not in netlists:
+                    netlists.append(netlist)
+            logging.info(f"checking micro tile container {name}")
+            result = micro_container.check_container(
+                self.config["pdk"],
+                container.local_dir,
+                name,
+                netlists,
+                os.path.join(container.local_dir, "check"),
+            )
+            logging.info(
+                f"  {name}: {result['drc_errors']} DRC errors, "
+                f"{result['antenna_violations']} antenna violations, "
+                f"LVS {'match' if result['lvs_match'] else 'mismatch'}"
+            )
+            if (
+                result["drc_errors"]
+                or result["antenna_violations"]
+                or not result["lvs_match"]
+            ):
+                failed.append(name)
+        if failed:
+            logging.error(f"micro tile containers that failed their checks: {failed}")
+            exit(1)
 
     def list(self):
         for project in self.projects:
