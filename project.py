@@ -490,6 +490,8 @@ class Project:
 
     def create_merged_config(self):
         config = read_config("src/config")
+        if self.info.is_micro:
+            config = {**self.tech.micro_librelane_defaults, **config}
         user_config = read_config("src/user_config")
         write_config(override_config(config, user_config), "src/config_merged")
 

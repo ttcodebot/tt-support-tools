@@ -32,6 +32,8 @@ class Tech(Protocol):
     The micro tile routes up to the layer below project_top_metal_layer. Its horizontal power stripes on that layer are its power pins:
     the vertical power stripes of the container project, on project_top_metal_layer, cross them. """
     micro_librelane_config: Dict[str, Union[bool, int, float, str]]
+    """ LibreLane configuration of a micro tile that applies only where the project's config.json leaves it unset """
+    micro_librelane_defaults: Dict[str, Union[int, str, List[str]]]
     """ These layers will be removed from the SVG render of the layout """
     label_layers: List[Tuple[int, int]]
     """ These layers are hardly visible and will also be removed from the SVG render of the layout """
@@ -96,6 +98,15 @@ class Sky130Tech(Tech):
         "PDN_HPITCH": 21.76,
         "PDN_HOFFSET": 6.8,
     }
+    micro_librelane_defaults = {
+        "SYNTH_EXCLUDED_CELL_FILE": "dir::../tt/tech/sky130A/micro_no_synth.cells",
+        # A micro tile has a few dozen flops at most, in a core of about 65 x 46 um:
+        # one sink cluster and clkbuf_2/clkbuf_4 drive them all
+        "CTS_SINK_CLUSTERING_SIZE": 64,
+        "CTS_SINK_CLUSTERING_MAX_DIAMETER": 120,
+        "CTS_ROOT_BUFFER": "sky130_fd_sc_hd__clkbuf_4",
+        "CTS_CLK_BUFFERS": ["sky130_fd_sc_hd__clkbuf_2", "sky130_fd_sc_hd__clkbuf_4"],
+    }
     label_layers = [
         (64, 59),  # pwell.label
         (64, 5),  # nwell.label
@@ -157,6 +168,7 @@ class IHPG2Tech(Tech):
     project_top_metal_layer = "TopMetal1"
     librelane_config = {}
     micro_librelane_config = {}
+    micro_librelane_defaults = {}
     label_layers = [
         (8, 1),  # Metal1.label
         (8, 25),  # Metal1.text
@@ -304,6 +316,7 @@ class GF180MCUDTech(Tech):
         "PDN_HPITCH": 30.24,
         "PDN_HOFFSET": 12.6,
     }
+    micro_librelane_defaults = {}
     label_layers = [
         # TODO: add label layers
     ]
@@ -347,6 +360,7 @@ class FpgaTech(Tech):
     project_top_metal_layer = ""
     librelane_config = {}
     micro_librelane_config = {}
+    micro_librelane_defaults = {}
     label_layers = []
     buried_layers = []
     scramble_cells = None
