@@ -95,6 +95,8 @@ class Sky130Tech(Tech):
         "PDN_HSPACING": 9.88,
         "PDN_HPITCH": 21.76,
         "PDN_HOFFSET": 6.8,
+        # The PDK's synthesis exclusion list without the drive-strength-1 logic cells
+        "SYNTH_EXCLUDED_CELL_FILE": "dir::../tt/tech/sky130A/micro_no_synth.cells",
     }
     label_layers = [
         (64, 59),  # pwell.label
