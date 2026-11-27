@@ -95,6 +95,9 @@ class Sky130Tech(Tech):
         "PDN_HSPACING": 9.88,
         "PDN_HPITCH": 21.76,
         "PDN_HOFFSET": 6.8,
+        # A clock net with a non-default rule keeps double spacing, also from the routing
+        # obstructions next to its pin (micro_edge_keepout.yaml)
+        "CTS_APPLY_NDR": "none",
     }
     label_layers = [
         (64, 59),  # pwell.label
