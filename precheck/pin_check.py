@@ -1,5 +1,7 @@
 import logging
+import os
 import re
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import partial
@@ -15,6 +17,10 @@ from tech_data import (
     power_pins_min_width,
     valid_lef_port_layers,
 )
+
+# The micro tile power rule is the assembly's own (micro_container.py, in the tools)
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+import micro_container  # noqa: E402
 
 
 def canonicalize_rectangles(
@@ -205,6 +211,21 @@ def parse_def(template_def: str) -> DefTemplate:
         dbu_per_micron=dbu_per_micron,
         pins=pins,
     )
+
+
+def micro_power_rule_check(lef: str, tech: str) -> int:
+    # The tools connect the container to a micro tile's power shapes on its top layer where
+    # the container's power stripes cross them, in whichever slot the micro tile lands
+    if not micro_container.has_container(tech):
+        return 0
+    with open(lef) as f:
+        shapes = micro_container.lef_power_shapes(f.read(), tech)
+    # A net without a port on the top layer is already reported
+    nets = [net for net in shapes if shapes[net]]
+    errors = micro_container.power_rule_errors(tech, shapes, nets)
+    for error in errors:
+        logging.error(f"{error}, in {lef}")
+    return len(errors)
 
 
 def pin_check(
@@ -408,6 +429,9 @@ def pin_check(
                         f"Port {current_pin} not entirely within project area in {lef}"
                     )
                     lef_errors += 1
+
+    if is_micro:
+        lef_errors += micro_power_rule_check(lef, tech)
 
     # check for overlapping pins
 

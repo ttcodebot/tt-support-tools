@@ -713,6 +713,39 @@ def gds_lef_micro_example(tmp_path_factory: pytest.TempPathFactory):
 
 
 @pytest.fixture(scope="session")
+def gds_lef_micro_moved_stripes(tmp_path_factory: pytest.TempPathFactory):
+    """A micro tile with its own power stripe placement: two VDPWR stripes, one 1.6 um wide."""
+    return generate_micro_example(
+        tmp_path_factory,
+        "TEST_micro_moved_stripes",
+        [
+            CompoundPort(
+                "VDPWR",
+                [
+                    PortRect("met3", (300, 1300), (6700, 1460)),
+                    PortRect("met3", (300, 3700), (6700, 3780)),
+                ],
+            ),
+            SimplePort("VGND", "met3", (300, 2400), (6700, 2500)),
+        ],
+    )
+
+
+@pytest.fixture(scope="session")
+def gds_lef_micro_short_stripes(tmp_path_factory: pytest.TempPathFactory):
+    """A micro tile whose VDPWR stripe reaches one of the container's VPWR stripes, and
+    none of them when the micro tile is mirrored."""
+    return generate_micro_example(
+        tmp_path_factory,
+        "TEST_micro_short_stripes",
+        [
+            SimplePort("VDPWR", "met3", (300, 680), (1500, 780)),
+            SimplePort("VGND", "met3", (300, 1768), (6700, 1868)),
+        ],
+    )
+
+
+@pytest.fixture(scope="session")
 def gds_lef_micro_no_top_layer_port(tmp_path_factory: pytest.TempPathFactory):
     """A micro tile whose VDPWR has no met3 port for the container to connect to."""
     return generate_micro_example(
@@ -1192,6 +1225,42 @@ def test_pin_micro_example(gds_lef_micro_example: tuple[str, str]):
         PDK_NAME,
         is_micro=True,
     )
+
+
+@sky130A_only
+def test_pin_micro_moved_stripes(gds_lef_micro_moved_stripes: tuple[str, str]):
+    gds_file, lef_file = gds_lef_micro_moved_stripes
+    precheck.pin_check(
+        gds_file,
+        lef_file,
+        MICRO_TEMPLATE_DEF,
+        "TEST_micro_moved_stripes",
+        False,
+        PDK_NAME,
+        is_micro=True,
+    )
+
+
+@sky130A_only
+def test_pin_micro_short_stripes(
+    gds_lef_micro_short_stripes: tuple[str, str], caplog: pytest.LogCaptureFixture
+):
+    gds_file, lef_file = gds_lef_micro_short_stripes
+    with pytest.raises(precheck.PrecheckFailure):
+        precheck.pin_check(
+            gds_file,
+            lef_file,
+            MICRO_TEMPLATE_DEF,
+            "TEST_micro_short_stripes",
+            False,
+            PDK_NAME,
+            is_micro=True,
+        )
+    assert (
+        "VPWR connects to the container in 1 places in slot 0 (not mirrored), at least 2 needed"
+        in caplog.text
+    )
+    assert "VGND connects" not in caplog.text
 
 
 @sky130A_only
