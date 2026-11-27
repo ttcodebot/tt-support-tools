@@ -1230,6 +1230,94 @@ def test_pin_micro_met4_port(
     assert "Port VDPWR has wrong layer" in caplog.text
 
 
+MICRO_EDGE_KEEPOUT = f"../tech/{PDK_NAME}/micro_edge_keepout.yaml"
+# Metal of a micro tile that comes as close to its edges as the edge bands allow
+MICRO_EDGE_METAL = [
+    ("met1", (0, 0.14, 70.1, 0.28)),
+    ("met1", (0, 51.4, 70.1, 51.54)),
+    ("met2", (70.1 - 0.14, 0.14, 70.1, 51.54)),
+    ("met3", (60, 0.2, 69.43, 0.5)),
+    ("met3", (60, 4.0, 69.43, 4.3)),
+    ("met3", (60, 51.18, 69.43, 51.48)),
+    ("li1", (10, 0.085, 10.17, 1.0)),
+]
+
+
+def write_micro_edge_layout(
+    gds_file: str, toplevel: str, extra: list[tuple[str, tuple]]
+) -> str:
+    """Writes a micro tile layout: its pins, the wires that reach them (with a via pad,
+    taller than the pin, just outside the right band), MICRO_EDGE_METAL and the given
+    shapes."""
+    layout = pya.Layout()
+    top_cell = layout.create_cell(toplevel)
+
+    def paint(layer_name, box):
+        info = gds_layers[f"{layer_name}.drawing"]
+        layer = layout.layer(info.layer, info.data_type)
+        top_cell.shapes(layer).insert(pya.DBox(*box))
+
+    template = precheck.parse_def(MICRO_TEMPLATE_DEF)
+    for layer_name, lx, by, rx, ty in template.pins.values():
+        paint(layer_name, (60, by / 1000, rx / 1000, ty / 1000))
+        y = (by + ty) / 2000
+        paint(layer_name, (69.1, y - 0.165, 69.43, y + 0.165))
+    for layer_name, box in MICRO_EDGE_METAL + extra:
+        paint(layer_name, box)
+    layout.write(gds_file)
+    return gds_file
+
+
+@sky130A_only
+def test_micro_edge_check_pass(tmp_path: Path):
+    gds_file = write_micro_edge_layout(
+        str(tmp_path / "TEST_micro_edges.gds"), "TEST_micro_edges", []
+    )
+    precheck.micro_edge_check(
+        gds_file, MICRO_TEMPLATE_DEF, MICRO_EDGE_KEEPOUT, "TEST_micro_edges", PDK_NAME
+    )
+
+
+@sky130A_only
+@pytest.mark.parametrize(
+    "layer_name, box, message",
+    [
+        # Met3 next to a pin, from a wire that jogs in the pin strip
+        ("met3", (69.43, 11.75, 69.61, 13.41), "met3 within 0.95 um of the right edge"),
+        # A via pad on a pin, taller than the pin
+        (
+            "met3",
+            (69.5, 11.055, 69.83, 11.385),
+            "met3 within 0.95 um of the right edge",
+        ),
+        ("met1", (67.38, 44.92, 70.31, 45.18), "met1 within 0.28 um of the right edge"),
+        ("met2", (70.02, 4.43, 70.28, 45.21), "met2 within 0.28 um of the right edge"),
+        ("met2", (30.0, 50.0, 30.14, 51.6), "met2 within 0.14 um of the top edge"),
+        ("met3", (10.0, 0.1, 20.0, 0.4), "met3 within 0.2 um of the bottom edge"),
+        ("li1", (10.0, 51.6, 10.17, 51.68), "li1 within 0.085 um of the top edge"),
+    ],
+)
+def test_micro_edge_check_fail(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    layer_name: str,
+    box: tuple,
+    message: str,
+):
+    gds_file = write_micro_edge_layout(
+        str(tmp_path / "TEST_micro_edges.gds"), "TEST_micro_edges", [(layer_name, box)]
+    )
+    with pytest.raises(precheck.PrecheckFailure):
+        precheck.micro_edge_check(
+            gds_file,
+            MICRO_TEMPLATE_DEF,
+            MICRO_EDGE_KEEPOUT,
+            "TEST_micro_edges",
+            PDK_NAME,
+        )
+    assert message in caplog.text
+
+
 @sky130A_only
 def test_pin_analog_example_3v3(gds_lef_analog_example_3v3: tuple[str, str]):
     gds_file, lef_file = gds_lef_analog_example_3v3
