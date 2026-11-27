@@ -434,12 +434,14 @@ def test_assemble_fillers(tmp_path):
     assert layout.cell(mc.SLOT) is None and layout.cell(mc.GENERIC) is None
     top_cell = layout.cell(top)
     assert sum(1 for i in top_cell.each_inst() if i.cell.name == mc.FILLER) == 4
-    # Two via3 per jumper, one jumper per signal pin, in the container's top cell
-    via3 = top_cell.shapes(layout.find_layer(70, 44))
-    pin_vias = [
-        s for s in via3.each() if s.box.width() == 200 and s.box.height() == 200
-    ]
-    assert len(pin_vias) >= 4 * 18 * 2
+    # In the container's top cell, over the slots: two via3 per jumper, one jumper per signal
+    # pin, and the power vias (6 crossings of 4x2 cuts per net)
+    via3 = pya.Region(top_cell.shapes(layout.find_layer(70, 44)))
+    slots = pya.Region()
+    for index in range(4):
+        box = pya.DBox(0, 0, 70.38, 51.68).transformed(mc.slot_trans(PDK, index))
+        slots.insert(box.to_itype(layout.dbu))
+    assert (via3 & slots).count() == 4 * (18 * 2 + 2 * 6 * 8)
     with open(os.path.join(tmp_path, f"{top}.v")) as f:
         netlist = f.read()
     assert re.findall(rf"^ {mc.FILLER} proj\d", netlist, re.M) == [
