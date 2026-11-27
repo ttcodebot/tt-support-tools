@@ -241,6 +241,63 @@ def boundary_check(gds: str, template_def: str, tech: str):
         raise PrecheckFailure("Missing top-level prBoundary rectangle with right size")
 
 
+def micro_edge_check(
+    gds: str, template_def: str, keepout_file: str, top_module: str, tech: str
+):
+    """Ensure that a micro tile's metal stays out of the bands along its edges, apart from
+    its pins and the ends of their wires (keepout_file, see tech/sky130A)."""
+    if not os.path.exists(keepout_file):
+        return
+    with open(keepout_file) as f:
+        keepout = yaml.safe_load(f)
+    template = parse_def(template_def)
+    width = template.die_width / 1000
+    height = template.die_height / 1000
+    window = keepout["pin_window"]
+    layout = pya.Layout()
+    layout.read(gds)
+    top = layout.cell(top_module)
+    if top is None:
+        raise PrecheckFailure(f"Cell {top_module} not found in {gds}")
+    layers = load_layers(tech)
+    errors = 0
+    for layer, widths in keepout["bands"].items():
+        layer_info = layers[f"{layer}.drawing"]
+        index = layout.find_layer(layer_info.layer, layer_info.data_type)
+        if index is None:
+            continue
+        metal = pya.Region(top.begin_shapes_rec(index))
+        left, bottom, right, top_width = widths
+        bands = {
+            "left": (left, (0, 0, left, height)),
+            "bottom": (bottom, (0, 0, width, bottom)),
+            "right": (right, (width - right, 0, width, height)),
+            "top": (top_width, (0, height - top_width, width, height)),
+        }
+        for edge, (band_width, box) in bands.items():
+            if not band_width:
+                continue
+            region = metal & pya.Region(pya.DBox(*box).to_itype(layout.dbu))
+            if edge == "right":
+                for pin_layer, _, by, rx, ty in template.pins.values():
+                    if pin_layer == layer and rx == template.die_width:
+                        pin_box = (width - right, by / 1000 - window)
+                        pin_box += (width, ty / 1000 + window)
+                        region -= pya.Region(pya.DBox(*pin_box).to_itype(layout.dbu))
+            for polygon in region.merged().each():
+                errors += 1
+                logging.error(
+                    f"{layer} within {band_width} um of the {edge} edge: "
+                    f"{polygon.bbox().to_dtype(layout.dbu)}"
+                )
+    if errors > 0:
+        raise PrecheckFailure(
+            f"Micro tile metal too close to its edges, see {errors} error"
+            + ("s" if errors > 1 else "")
+            + " above"
+        )
+
+
 def power_pin_check(verilog: str, lef: str, uses_vapwr: bool):
     """Ensure that VPWR / VGND are present and have USE definitions,
     and that VAPWR is present if and only if 'uses_vapwr' is set."""
@@ -570,6 +627,17 @@ def main():
             "check": lambda: boundary_check(gds_file, template_def, tech),
         },
         {
+            "name": "Micro tile edge check",
+            "check": lambda: micro_edge_check(
+                gds_file,
+                template_def,
+                f"../tech/{tech}/micro_edge_keepout.yaml",
+                top_module,
+                tech,
+            ),
+            "micro": True,
+        },
+        {
             "name": "Power pin check",
             "check": lambda: power_pin_check(verilog_file, lef_file, uses_vapwr),
             "techs": ["sky130A", "gf180mcuD"],
@@ -621,6 +689,8 @@ def main():
     for check in checks:
         name = check["name"]
         if "techs" in check and tech not in check["techs"]:
+            continue
+        if check.get("micro") and not is_micro:
             continue
         start_time = time.time()
         test_case = ET.SubElement(testsuite, "testcase", name=name)
