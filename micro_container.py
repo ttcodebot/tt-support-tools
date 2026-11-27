@@ -108,11 +108,12 @@ class MicroContainerTech:
     # orientation, in select order. Slots of one column are this far apart (slot_gap).
     slots: Tuple[Tuple[Tuple[float, float], str], ...]
     slot_gap: float
-    # Front-end layers whose spacing reaches across slot_gap: a micro tile keeps them this far
-    # from its top and bottom edges (where another micro tile faces it), and must not draw
-    # forbidden_feol at all
+    # Standard cell layers whose spacing reaches across slot_gap: a micro tile keeps them this
+    # far from its top and bottom edges (where another micro tile faces it)
     feol_edge_keepout: Dict[str, Tuple[Tuple[int, int], float]]
-    forbidden_feol: Dict[str, Tuple[int, int]]
+    # Layers no standard cell uses whose spacing reaches further than slot_gap or
+    # edge_clearance: a micro tile must not draw them at all
+    forbidden_long_reach: Dict[str, Tuple[int, int]]
     stdcell_spice: str
     stdcell_prefix: str
 
@@ -158,11 +159,21 @@ MICRO_CONTAINER_TECH: Dict[str, MicroContainerTech] = {
         ),
         # The largest metal spacing (met3.3d). Of the standard cell layers only nwell reaches
         # further (nwell.2a, 1.27 um): 0.435 um from each facing edge plus the gap. The flow's
-        # core margins keep every cell's nwell 2.5 um from the edges. Deep nwell (dnwell.3,
-        # 6.3 um; 4.5 um to nwell) would need more than the container can give.
+        # core margins keep every cell's nwell 2.5 um from the edges.
         slot_gap=0.4,
         feol_edge_keepout={"nwell": ((64, 20), 0.435)},
-        forbidden_feol={"dnwell": (64, 18)},
+        # dnwell.3 6.3 um (4.5 um to nwell), photo.3 5 um, high voltage (hvi 0.7, hvntm
+        # 0.7 um, mv nwell 2 um), poly resistors (rpm/urpm 0.84 um), MiM caps (1.34 um to met3)
+        forbidden_long_reach={
+            "dnwell": (64, 18),
+            "photo": (81, 81),
+            "hvi": (75, 20),
+            "hvntm": (125, 20),
+            "rpm": (86, 20),
+            "urpm": (79, 20),
+            "capm": (89, 44),
+            "cap2m": (97, 44),
+        },
         stdcell_spice="libs.ref/sky130_fd_sc_hd/spice/*.spice",
         stdcell_prefix="sky130_fd_sc_hd__",
     ),
@@ -600,7 +611,8 @@ def check_micro_tile(pdk: str, micro_dir: str, macro: str) -> List[str]:
     - nothing on the container's layers (pin access via and above),
     - nothing outside its outline,
     - its pins and power stripes are drawn on the pin layer where the LEF says,
-    - no deep nwell, and nwell feol_edge_keepout from the edges facing the other slot.
+    - nothing on forbidden_long_reach (deep nwell, high voltage, poly resistors, MiM caps),
+      and nwell feol_edge_keepout from the edges facing the other slot.
     Nothing else: the container draws nothing in a slot but copies of the pins (and the power
     vias inside the power stripes), keeps edge_clearance from the slot outline outside it
     (test_micro_container.py), and the slots of a column are slot_gap apart, so any micro tile
@@ -654,10 +666,12 @@ def check_micro_tile(pdk: str, micro_dir: str, macro: str) -> List[str]:
             errors.append(
                 f"shapes on {info.layer}/{info.datatype} outside the micro tile outline, around {b}"
             )
-    for name, (layer, datatype) in t.forbidden_feol.items():
+    for name, (layer, datatype) in t.forbidden_long_reach.items():
         index = layout.find_layer(layer, datatype)
         if index is not None and not top.bbox_per_layer(index).empty():
-            errors.append(f"shapes on {name}: its spacing reaches beyond the slot gap")
+            errors.append(
+                f"shapes on {name}: its spacing rules reach further than the container keeps clear"
+            )
     for name, ((layer, datatype), keepout) in t.feol_edge_keepout.items():
         index = layout.find_layer(layer, datatype)
         if index is None:
