@@ -218,8 +218,9 @@ def edit_power_stripes(src_dir, macro, dst_dir, new_macro, edits):
     """A copy of micro tile `macro` named `new_macro`, with some of its met3 power stripes
     changed: `edits` maps the box of an existing stripe to a list of new boxes (none:
     removed, two: copied). The via2 cuts under a stripe move with it vertically when they
-    stay on it: on the filler, whose met2 power stripes run the full height and which has
-    no other met3 than its pins, the result is still DRC and LVS clean."""
+    stay on it. On the filler, whose met2 power stripes run the full height and whose only
+    other met3 is its pins and the uo_out wires from x = 67.685, a stripe that ends at
+    x = 67.0 or avoids those wires keeps it DRC and LVS clean."""
     layout = pya.Layout()
     layout.read(os.path.join(src_dir, f"{macro}.oas"))
     top = layout.cell(macro)
@@ -242,7 +243,10 @@ def edit_power_stripes(src_dir, macro, dst_dir, new_macro, edits):
                 text = s.dtext
                 top.shapes(labels).erase(s)
                 for b in new_boxes:
-                    top.shapes(labels).insert(text.moved(0, b[1] - old[1]))
+                    center = pya.DBox(*b).center()
+                    top.shapes(labels).insert(
+                        pya.DText(text.string, center.x, center.y)
+                    )
         under = [
             s for s in top.shapes(via2).each() if old_box.contains(s.dbbox().center())
         ]
@@ -323,7 +327,7 @@ def test_moved_extra_and_wide_stripes(tmp_path):
         "tt_um_test_moved",
         {
             VPWR_LOW: [(2.76, 14.22, 67.62, 15.22), (2.76, 3.0, 67.62, 4.6)],
-            VGND_HIGH: [(2.76, 46.0, 67.62, 46.8)],
+            VGND_HIGH: [(2.76, 46.0, 67.0, 46.8)],
         },
     )
     assert mc.check_micro_tile(PDK, tile_dir, macro) == []
@@ -382,22 +386,42 @@ def test_too_few_crossings_are_rejected(tmp_path):
         )
 
 
-def test_lef_power_port_without_metal_is_rejected(tmp_path):
+def filler_with_lef(tmp_path, replacements):
+    """The filler with some text of its LEF replaced."""
     frozen = mc.frozen_dir(PDK)
     with open(os.path.join(frozen, f"{mc.FILLER}.lef")) as f:
         lef = f.read()
-    moved = lef.replace(
-        "RECT 2.760 41.660 67.620 42.660", "RECT 2.760 44.660 67.620 45.660"
-    )
-    assert moved != lef
+    for old, new in replacements:
+        assert old in lef
+        lef = lef.replace(old, new)
     with open(os.path.join(tmp_path, f"{mc.FILLER}.lef"), "w") as f:
-        f.write(moved)
+        f.write(lef)
     os.symlink(
         os.path.join(frozen, f"{mc.FILLER}.oas"),
         os.path.join(tmp_path, f"{mc.FILLER}.oas"),
     )
-    assert mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER) == [
+    return str(tmp_path)
+
+
+def test_lef_power_port_without_metal_is_rejected(tmp_path):
+    tile_dir = filler_with_lef(
+        tmp_path,
+        [("RECT 2.760 41.660 67.620 42.660", "RECT 2.760 44.660 67.620 45.660")],
+    )
+    assert mc.check_micro_tile(PDK, tile_dir, mc.FILLER) == [
         "VGND port (2.76, 44.66, 67.62, 45.66) on met3 in the LEF is not all met3 in the layout"
+    ]
+
+
+def test_lef_power_port_on_the_other_net_is_rejected(tmp_path):
+    """LVS of the container would catch the VPWR vias on VGND metal, but not VGND vias on
+    metal that is not connected to VGND: Magic joins the grounds through the substrate.
+    """
+    vpwr, vgnd = "RECT 2.760 9.020 67.620 10.020", "RECT 2.760 19.900 67.620 20.900"
+    tile_dir = filler_with_lef(tmp_path, [(vpwr, "@"), (vgnd, vpwr), ("@", vgnd)])
+    assert mc.check_micro_tile(PDK, tile_dir, mc.FILLER) == [
+        "VPWR port (2.76, 19.9, 67.62, 20.9) on met3 in the LEF is on met3 labeled VGND in the layout",
+        "VGND port (2.76, 9.02, 67.62, 10.02) on met3 in the LEF is on met3 labeled VPWR in the layout",
     ]
 
 

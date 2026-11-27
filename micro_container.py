@@ -818,13 +818,39 @@ def check_micro_tile(pdk: str, micro_dir: str, macro: str) -> List[str]:
         errors.append(
             f"{area:.3f} um2 of {pin_layer} in the pin strip (x > {width - t.strip_width:.2f}) apart from the pins, around {b}"
         )
-    # The tools draw the power vias onto the LEF power ports: the layout must have them
+    # The tools draw the power vias onto the LEF power ports: the layout must have them, on
+    # metal labeled with their net. LVS of the container does not see a VGND port that is not
+    # connected: Magic joins the grounds through the substrate.
+    labels: Dict[str, List[pya.Point]] = {net: [] for net in POWER_NETS}
+    for gds_layer in t.layer_gds[pin_layer][1:]:
+        index = layout.find_layer(*gds_layer)
+        if index is None:
+            continue
+        for shape in top.shapes(index).each():
+            if shape.is_text():
+                net = POWER_PIN_ALIASES.get(shape.text_string, shape.text_string)
+                if net in labels:
+                    labels[net].append(pya.Point() + shape.text_pos)
     for net, shapes in power_shapes.items():
         for s in shapes:
-            missing = pya.Region(pya.DBox(*s).to_itype(layout.dbu)) - metal
-            if not missing.is_empty():
+            port = pya.Region(pya.DBox(*s).to_itype(layout.dbu))
+            if not (port - metal).is_empty():
                 errors.append(
                     f"{net} port {s} on {pin_layer} in the LEF is not all {pin_layer} in the layout"
+                )
+                continue
+            under = metal.interacting(port)
+            nets = set()
+            for n, points in labels.items():
+                marks = pya.Region()
+                for p in points:
+                    marks.insert(pya.Box(p, p).enlarged(1, 1))
+                if not under.interacting(marks).is_empty():
+                    nets.add(n)
+            if nets != {net}:
+                errors.append(
+                    f"{net} port {s} on {pin_layer} in the LEF is on {pin_layer} labeled "
+                    f"{', '.join(sorted(nets)) or 'with no power net'} in the layout"
                 )
     return errors
 
