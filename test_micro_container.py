@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from types import SimpleNamespace
 
 import klayout.db as pya
@@ -155,37 +156,152 @@ def test_placeholder_matches_frozen_slot(tmp_path):
     assert signatures[0] == signatures[1] == signatures[2]
 
 
+def own_region(layout, top, layer, skip):
+    """Shapes of `top` and its subcells on `layer`, without the cells in `skip`."""
+    index = layout.find_layer(*layer)
+    if index is None:
+        return pya.Region()
+    it = top.begin_shapes_rec(index)
+    it.unselect_cells([c.cell_index() for c in skip])
+    return pya.Region(it).merged()
+
+
 def test_frozen_container_leaves_the_slots_to_the_micro_tiles():
-    """No container metal over a slot on the micro tile's routing layers, apart from the
-    power connection on the pin layer and nothing at all in the pin strip."""
+    """Inside a slot the container has nothing on a micro tile's layers but the power vias,
+    inside the power stripes; outside, it keeps edge_clearance from the slot outline."""
     t = mc.MICRO_CONTAINER_TECH[PDK]
     mc.verify_frozen(PDK)
     layout = pya.Layout()
     layout.read(os.path.join(mc.frozen_dir(PDK), f"{mc.GENERIC}.oas"))
     top = layout.cell(mc.GENERIC)
-    (width, height), _ = mc.template_interface(PDK)
+    slot_cell = layout.cell(mc.SLOT)
+    (width, height), interface = mc.template_interface(PDK)
+    stripes = pya.Region()
+    for name, _, r in interface:
+        if name in ("VPWR", "VGND"):
+            stripes.insert(pya.DBox(*r).to_itype(layout.dbu))
     slots = [i for i in top.each_inst() if i.cell.name == mc.SLOT]
-    assert len(slots) == len(t.slots)
+    origins = []
     for inst in slots:
         trans = inst.dcplx_trans
-        slot = pya.Region(
-            pya.DBox(0, 0, width, height).transformed(trans).to_itype(layout.dbu)
+        tile = pya.DBox(0, 0, width, height).transformed(trans)
+        origins.append(
+            ((round(tile.left, 3), round(tile.bottom, 3)), trans.is_mirror())
         )
-        strip = pya.Region(
-            pya.DBox(width - t.strip_width, 0, width, height)
-            .transformed(trans)
-            .to_itype(layout.dbu)
-        )
-        for name in t.routing_layers:
-            own = pya.Region(top.shapes(layout.find_layer(*t.routing_gds[name])))
-            if name == t.routing_layers[-1]:
-                assert (own & strip).is_empty()
+        outline = pya.Region(tile.to_itype(layout.dbu))
+        power = stripes.transformed(inst.cplx_trans)
+        for name in t.routing_layers + ("via3",):
+            gds = t.routing_gds.get(name, t.stack_gds.get(name))
+            own = own_region(layout, top, gds, [slot_cell])
+            inside = own & outline
+            if name in ("met3", "via3"):
+                assert (inside - power).is_empty(), name
             else:
-                assert (own & slot).is_empty(), name
+                assert inside.is_empty(), name
+            if name in t.edge_clearance:
+                d = round(t.edge_clearance[name] / layout.dbu)
+                band = outline.sized(d) - outline
+                assert (own & band).is_empty(), name
+    assert sorted(origins) == sorted(
+        (location, orientation == "FN") for location, orientation in t.slots
+    )
+
+
+def test_slots_are_apart():
+    """Two micro tiles never face each other closer than slot_gap, which is at least the
+    spacing of every metal layer."""
+    t = mc.MICRO_CONTAINER_TECH[PDK]
+    (width, height), _ = mc.template_interface(PDK)
+    boxes = [pya.DBox(x, y, x + width, y + height) for (x, y), _ in t.slots]
+    assert t.slot_gap >= max(t.edge_clearance.values())
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1 :]:
+            gap = max(
+                b.left - a.right, a.left - b.right, b.bottom - a.top, a.bottom - b.top
+            )
+            assert gap >= t.slot_gap - 1e-9
+
+
+def test_jumpers_copy_the_pins_inside_the_slot():
+    """Inside the micro tile outline a jumper is exactly its pin; within edge_clearance of the
+    outline it is as tall as the pin; everything else of it is further away."""
+    t = mc.MICRO_CONTAINER_TECH[PDK]
+    width, height, pins, _, _ = mc.micro_tile_interface(PDK)
+    dbu = 0.001
+    outline = pya.Region(pya.DBox(0, 0, width, height).to_itype(dbu))
+    for _, _, layer, r in pins:
+        shapes = mc.pin_stack(PDK, r)[1]
+        met3 = pya.Region()
+        for name, box in shapes:
+            if name == "met3":
+                met3.insert(pya.DBox(*box).to_itype(dbu))
+            else:
+                # via3 and met4: a micro tile has nothing there
+                assert box[0] >= width + t.edge_clearance["met3"] - 1e-9
+        met3.merge()
+        pin = pya.Region(pya.DBox(*r).to_itype(dbu))
+        assert ((met3 & outline) ^ pin).is_empty()
+        d = round(t.edge_clearance["met3"] / dbu)
+        near = met3 & (outline.sized(d) - outline)
+        x1, y1, x2, y2 = r
+        extension = pya.DBox(x2, y1, x2 + t.edge_clearance["met3"], y2)
+        assert (near ^ pya.Region(extension.to_itype(dbu))).is_empty()
+
+
+def test_tile_metal_at_the_outline_is_accepted(tmp_path):
+    """No keep-out inside a micro tile: met3 right next to a pin and at the pin edge passes."""
+    frozen = mc.frozen_dir(PDK)
+    shutil.copy(os.path.join(frozen, f"{mc.FILLER}.lef"), tmp_path)
+    layout = pya.Layout()
+    layout.read(os.path.join(frozen, f"{mc.FILLER}.oas"))
+    cell = layout.cell(mc.FILLER)
+    met3 = layout.layer(70, 20)
+    cell.shapes(met3).insert(pya.DBox(65.0, 3.51, 70.38, 5.0))
+    cell.shapes(met3).insert(pya.DBox(60.0, 0.0, 70.38, 2.61))
+    layout.write(os.path.join(tmp_path, f"{mc.FILLER}.oas"))
+    assert mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER) == []
+
+
+def test_interface_check_rejects_missing_pins_and_shapes_outside(tmp_path):
+    frozen = mc.frozen_dir(PDK)
+    shutil.copy(os.path.join(frozen, f"{mc.FILLER}.lef"), tmp_path)
+    layout = pya.Layout()
+    layout.read(os.path.join(frozen, f"{mc.FILLER}.oas"))
+    cell = layout.cell(mc.FILLER)
+    met3 = layout.layer(70, 20)
+    cut = pya.Region(pya.DBox(70.0, 2.0, 70.38, 4.0).to_itype(layout.dbu))
+    kept = pya.Region(cell.shapes(met3)) - cut
+    cell.shapes(met3).clear()
+    cell.shapes(met3).insert(kept)
+    cell.shapes(layout.layer(69, 20)).insert(pya.DBox(70.0, 20.0, 70.5, 21.0))
+    layout.write(os.path.join(tmp_path, f"{mc.FILLER}.oas"))
+    errors = mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER)
+    assert len(errors) == 2
+    assert errors[0].startswith("shapes on 69/20 outside the micro tile outline")
+    assert errors[1].startswith("clk: met3 at (69.38, 2.91, 70.38, 3.21) (LEF)")
 
 
 def test_filler_fits():
     assert mc.check_micro_tile(PDK, mc.frozen_dir(PDK), mc.FILLER) == []
+
+
+def test_interface_check_rejects_nwell_at_the_seam_and_deep_nwell(tmp_path):
+    frozen = mc.frozen_dir(PDK)
+    shutil.copy(os.path.join(frozen, f"{mc.FILLER}.lef"), tmp_path)
+    layout = pya.Layout()
+    layout.read(os.path.join(frozen, f"{mc.FILLER}.oas"))
+    cell = layout.cell(mc.FILLER)
+    # nwell at the pin edge is fine (the container's own nwell is 1.65 um away)
+    cell.shapes(layout.layer(64, 20)).insert(pya.DBox(69.0, 20.0, 70.38, 22.0))
+    layout.write(os.path.join(tmp_path, f"{mc.FILLER}.oas"))
+    assert mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER) == []
+    cell.shapes(layout.layer(64, 20)).insert(pya.DBox(10.0, 51.0, 12.0, 51.68))
+    cell.shapes(layout.layer(64, 18)).insert(pya.DBox(20.0, 20.0, 24.0, 24.0))
+    layout.write(os.path.join(tmp_path, f"{mc.FILLER}.oas"))
+    errors = mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER)
+    assert len(errors) == 2
+    assert errors[0].startswith("shapes on dnwell")
+    assert errors[1].startswith("nwell within 0.435 um of the top or bottom edge")
 
 
 def test_interface_check_rejects_moved_pins(tmp_path):
@@ -220,6 +336,19 @@ def test_assemble_fillers(tmp_path):
         s for s in via3.each() if s.box.width() == 200 and s.box.height() == 200
     ]
     assert len(pin_vias) >= 4 * 18 * 2
+    # The container's own met3 in a slot: the pins (jumpers) and the power vias
+    (width, height), interface = mc.template_interface(PDK)
+    filler = layout.cell(mc.FILLER)
+    met3 = own_region(layout, top_cell, (70, 20), [filler])
+    for inst in [i for i in top_cell.each_inst() if i.cell.name == mc.FILLER]:
+        trans = inst.cplx_trans
+        tile = pya.Region(pya.DBox(0, 0, width, height).to_itype(layout.dbu))
+        expected = pya.Region()
+        for _, _, r in interface:
+            expected.insert(pya.DBox(*r).to_itype(layout.dbu))
+        assert (
+            (met3 & tile.transformed(trans)) - expected.transformed(trans)
+        ).is_empty()
     with open(os.path.join(tmp_path, f"{top}.v")) as f:
         netlist = f.read()
     assert re.findall(rf"^ {mc.FILLER} proj\d", netlist, re.M) == [
