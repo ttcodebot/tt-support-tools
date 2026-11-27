@@ -32,6 +32,9 @@ class Tech(Protocol):
     The micro tile routes up to the layer below project_top_metal_layer. Its horizontal power stripes on that layer are its power pins:
     the vertical power stripes of the container project, on project_top_metal_layer, cross them. """
     micro_librelane_config: Dict[str, Union[bool, int, float, str]]
+    """ Core margins of a micro tile in microns (left, bottom, right, top), as the project templates set them (*_MARGIN_MULT).
+    The micro tile power grid of micro_librelane_config starts from this core. """
+    micro_core_margins: Tuple[float, float, float, float]
     """ These layers will be removed from the SVG render of the layout """
     label_layers: List[Tuple[int, int]]
     """ These layers are hardly visible and will also be removed from the SVG render of the layout """
@@ -58,6 +61,47 @@ class Tech(Protocol):
 
     def load_cell_definitions(self) -> Dict[str, CellDefinition]:
         raise NotImplementedError()
+
+    def micro_power_stripes(
+        self, die_width: float, die_height: float
+    ) -> Dict[str, List[Tuple[float, float, float, float]]]:
+        """Horizontal power stripes of a micro tile, as its power grid (micro_librelane_config) lays them out
+        on PDN_HORIZONTAL_LAYER: {"VPWR": [(x1, y1, x2, y2), ...], "VGND": [...]}, in microns.
+        The container project connects to them at these positions. Empty if the PDK has no micro tile.
+        """
+        pdn = self.micro_librelane_config
+        if "PDN_HORIZONTAL_LAYER" not in pdn:
+            return {}
+
+        # In nanometers, to place the stripes exactly
+        def nm(value: Union[bool, int, float, str]) -> int:
+            return round(float(value) * 1000)
+
+        left, bottom, right, top = map(nm, self.micro_core_margins)
+        core_x1, core_y1 = left, bottom
+        core_x2, core_y2 = nm(die_width) - right, nm(die_height) - top
+        width, pitch, offset, spacing = (
+            nm(pdn[key])
+            for key in ("PDN_HWIDTH", "PDN_HPITCH", "PDN_HOFFSET", "PDN_HSPACING")
+        )
+
+        def stripe(y: int) -> Tuple[float, float, float, float]:
+            # y is the bottom edge of the stripe
+            return (core_x1 / 1000, y / 1000, core_x2 / 1000, (y + width) / 1000)
+
+        stripes: Dict[str, List[Tuple[float, float, float, float]]] = {
+            "VPWR": [],
+            "VGND": [],
+        }
+        # The offset is to the centerline of the first VPWR stripe; each VGND stripe
+        # follows its VPWR stripe after the spacing
+        y = core_y1 + offset - width // 2
+        while y + width <= core_y2:
+            stripes["VPWR"].append(stripe(y))
+            if y + 2 * width + spacing <= core_y2:
+                stripes["VGND"].append(stripe(y + width + spacing))
+            y += pitch
+        return stripes
 
 
 def parse_openpdks_pdk_version(
@@ -96,6 +140,7 @@ class Sky130Tech(Tech):
         "PDN_HPITCH": 21.76,
         "PDN_HOFFSET": 6.8,
     }
+    micro_core_margins = (2.76, 2.72, 2.76, 2.72)  # 6 sites, 1 row
     label_layers = [
         (64, 59),  # pwell.label
         (64, 5),  # nwell.label
@@ -157,6 +202,7 @@ class IHPG2Tech(Tech):
     project_top_metal_layer = "TopMetal1"
     librelane_config = {}
     micro_librelane_config = {}
+    micro_core_margins = (0.0, 0.0, 0.0, 0.0)
     label_layers = [
         (8, 1),  # Metal1.label
         (8, 25),  # Metal1.text
@@ -229,6 +275,7 @@ class IHPCmos5lTech(IHPG2Tech):
         "PDN_HPITCH": 30.24,
         "PDN_HOFFSET": 7.56,
     }
+    micro_core_margins = (2.88, 3.78, 2.88, 3.78)  # 6 sites, 1 row
     label_layers = [
         (8, 1),  # Metal1.label
         (8, 25),  # Metal1.text
@@ -304,6 +351,7 @@ class GF180MCUDTech(Tech):
         "PDN_HPITCH": 30.24,
         "PDN_HOFFSET": 12.6,
     }
+    micro_core_margins = (3.36, 3.92, 3.36, 3.92)  # 6 sites, 1 row
     label_layers = [
         # TODO: add label layers
     ]
@@ -347,6 +395,7 @@ class FpgaTech(Tech):
     project_top_metal_layer = ""
     librelane_config = {}
     micro_librelane_config = {}
+    micro_core_margins = (0.0, 0.0, 0.0, 0.0)
     label_layers = []
     buried_layers = []
     scramble_cells = None

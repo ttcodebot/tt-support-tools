@@ -1,10 +1,13 @@
 import logging
+import os
 import re
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import partial
 from itertools import combinations
 from numbers import Real
+from typing import cast
 
 import gdstk
 from precheck_failure import PrecheckFailure
@@ -15,6 +18,10 @@ from tech_data import (
     power_pins_min_width,
     valid_lef_port_layers,
 )
+
+# The micro tile power grid is defined in the tools' tech.py
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from tech import TechName, tech_map  # noqa: E402
 
 
 def canonicalize_rectangles(
@@ -205,6 +212,54 @@ def parse_def(template_def: str) -> DefTemplate:
         dbu_per_micron=dbu_per_micron,
         pins=pins,
     )
+
+
+def format_rect(rect: tuple[int, int, int, int]) -> str:
+    lx, by, rx, ty = rect
+    return f"({lx/1000}, {by/1000})-({rx/1000}, {ty/1000})"
+
+
+def micro_power_stripes_check(
+    lef: str, lef_ports: dict, template: DefTemplate, tech: str
+) -> int:
+    # The container project connects to the power stripes of a micro tile on its top
+    # layer with vias at fixed positions: those of the tools' micro tile power grid
+    tech_info = tech_map[cast(TechName, tech)]
+    expected_stripes = tech_info.micro_power_stripes(
+        template.die_width / 1000, template.die_height / 1000
+    )
+    if not expected_stripes:
+        return 0
+    stripe_layer = tech_info.micro_librelane_config["PDN_HORIZONTAL_LAYER"]
+
+    errors = 0
+    for net, stripes in expected_stripes.items():
+        current_pin = "VDPWR" if net == "VPWR" else net  # as in compat_pins
+        if current_pin not in lef_ports:
+            continue  # already reported
+        expected = {tuple(round(v * 1000) for v in stripe) for stripe in stripes}
+        found = {
+            tuple(port[1:])
+            for port in lef_ports[current_pin]
+            if port[0] == stripe_layer
+        }
+        for rect in sorted(expected - found):
+            logging.error(
+                f"Port {current_pin} is missing the power stripe at {format_rect(rect)} on {stripe_layer} in {lef}"
+            )
+            errors += 1
+        for rect in sorted(found - expected):
+            logging.error(
+                f"Port {current_pin} has an unexpected power stripe at {format_rect(rect)} on {stripe_layer} in {lef}"
+            )
+            errors += 1
+
+    if errors > 0:
+        logging.error(
+            f"The micro tile container connects to the power stripes on {stripe_layer} only where the tools put them: "
+            "keep the micro tile power grid and the core margins (*_MARGIN_MULT in src/config.json) of the template"
+        )
+    return errors
 
 
 def pin_check(
@@ -408,6 +463,9 @@ def pin_check(
                         f"Port {current_pin} not entirely within project area in {lef}"
                     )
                     lef_errors += 1
+
+    if is_micro:
+        lef_errors += micro_power_stripes_check(lef, lef_ports, template, tech)
 
     # check for overlapping pins
 

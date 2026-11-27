@@ -500,20 +500,17 @@ def generate_example(
                     """
                 )
                 if port.name:
+                    # Every label is a port: magic writes only the shapes connected
+                    # to a port's labels, and rects of a port need not touch
                     tcl_append(
                         f"""
                         label {port.name} FreeSans {rect.layer}
+                        port make
+                        port use {port.port_use}
+                        port class {port.port_class}
+                        port conn n s e w
                         """
                     )
-            if port.name:
-                tcl_append(
-                    f"""
-                    port {port.name} makeall n
-                    port {port.name} use {port.port_use}
-                    port {port.name} class {port.port_class}
-                    port conn n s e w
-                    """
-                )
         tcl_append(
             f"""
             # Export
@@ -693,6 +690,17 @@ def generate_micro_example(
     return str(gds_file), str(lef_file)
 
 
+# The micro tile power grid of sky130A on met3, where the container connects to it
+MICRO_VPWR_STRIPES = [
+    PortRect("met3", (276, 902), (6762, 1002)),
+    PortRect("met3", (276, 3078), (6762, 3178)),
+]
+MICRO_VGND_STRIPES = [
+    PortRect("met3", (276, 1990), (6762, 2090)),
+    PortRect("met3", (276, 4166), (6762, 4266)),
+]
+
+
 @pytest.fixture(scope="session")
 def gds_lef_micro_example(tmp_path_factory: pytest.TempPathFactory):
     """A micro tile with horizontal met3 and vertical met2 power stripes."""
@@ -702,12 +710,9 @@ def gds_lef_micro_example(tmp_path_factory: pytest.TempPathFactory):
         [
             CompoundPort(
                 "VDPWR",
-                [
-                    PortRect("met3", (300, 680), (6700, 780)),
-                    PortRect("met2", (300, 300), (380, 4800)),
-                ],
+                MICRO_VPWR_STRIPES + [PortRect("met2", (300, 300), (380, 4800))],
             ),
-            SimplePort("VGND", "met3", (300, 1768), (6700, 1868)),
+            CompoundPort("VGND", MICRO_VGND_STRIPES),
         ],
     )
 
@@ -720,7 +725,7 @@ def gds_lef_micro_no_top_layer_port(tmp_path_factory: pytest.TempPathFactory):
         "TEST_micro_no_top_layer_port",
         [
             SimplePort("VDPWR", "met2", (300, 300), (380, 4800)),
-            SimplePort("VGND", "met3", (300, 1768), (6700, 1868)),
+            CompoundPort("VGND", MICRO_VGND_STRIPES),
         ],
     )
 
@@ -732,8 +737,24 @@ def gds_lef_micro_met4_port(tmp_path_factory: pytest.TempPathFactory):
         tmp_path_factory,
         "TEST_micro_met4_port",
         [
-            SimplePort("VDPWR", "met4", (300, 680), (6700, 780)),
-            SimplePort("VGND", "met3", (300, 1768), (6700, 1868)),
+            SimplePort("VDPWR", "met4", (276, 902), (6762, 1002)),
+            CompoundPort("VGND", MICRO_VGND_STRIPES),
+        ],
+    )
+
+
+@pytest.fixture(scope="session")
+def gds_lef_micro_moved_stripe(tmp_path_factory: pytest.TempPathFactory):
+    """A micro tile whose upper VGND stripe is one row higher than the container expects."""
+    return generate_micro_example(
+        tmp_path_factory,
+        "TEST_micro_moved_stripe",
+        [
+            CompoundPort("VDPWR", MICRO_VPWR_STRIPES),
+            CompoundPort(
+                "VGND",
+                [MICRO_VGND_STRIPES[0], PortRect("met3", (276, 4438), (6762, 4538))],
+            ),
         ],
     )
 
@@ -1228,6 +1249,31 @@ def test_pin_micro_met4_port(
             is_micro=True,
         )
     assert "Port VDPWR has wrong layer" in caplog.text
+
+
+@sky130A_only
+def test_pin_micro_moved_stripe(
+    gds_lef_micro_moved_stripe: tuple[str, str], caplog: pytest.LogCaptureFixture
+):
+    gds_file, lef_file = gds_lef_micro_moved_stripe
+    with pytest.raises(precheck.PrecheckFailure, match="see 2 LEF errors above"):
+        precheck.pin_check(
+            gds_file,
+            lef_file,
+            MICRO_TEMPLATE_DEF,
+            "TEST_micro_moved_stripe",
+            False,
+            PDK_NAME,
+            is_micro=True,
+        )
+    assert (
+        "Port VGND is missing the power stripe at (2.76, 41.66)-(67.62, 42.66) on met3"
+        in caplog.text
+    )
+    assert (
+        "Port VGND has an unexpected power stripe at (2.76, 44.38)-(67.62, 45.38) on met3"
+        in caplog.text
+    )
 
 
 @sky130A_only
