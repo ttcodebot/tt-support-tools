@@ -49,6 +49,9 @@ PINOUT_KEYS = [
     "uio[7]",
 ]
 
+# Keys of Tech.micro_librelane_config that a micro tile's src/config.json may override
+MICRO_POWER_STRIPE_KEYS = ("PDN_HWIDTH", "PDN_HSPACING", "PDN_HPITCH", "PDN_HOFFSET")
+
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 
@@ -524,7 +527,16 @@ class Project:
         }
         config.update(self.tech.librelane_config)
         if self.info.is_micro:
-            config.update(self.tech.micro_librelane_config)
+            micro_config = dict(self.tech.micro_librelane_config)
+            # A micro tile may place its own horizontal power stripes: the tools connect the
+            # container to them where they cross its stripes (micro_container.py)
+            project_config_file = os.path.join(self.src_dir, "config.json")
+            if os.path.exists(project_config_file):
+                project_config = read_config(os.path.join(self.src_dir, "config"))
+                for key in MICRO_POWER_STRIPE_KEYS:
+                    if key in project_config or f"FP_{key}" in project_config:
+                        micro_config.pop(key, None)
+            config.update(micro_config)
         write_config(config, os.path.join(self.src_dir, "user_config"), ("json",))
         self.create_merged_config()
 

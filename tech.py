@@ -30,7 +30,8 @@ class Tech(Protocol):
     ]
     """ LibreLane configuration of a micro tile (tiles: micro), applied on top of librelane_config. Empty if the PDK has no micro tile.
     The micro tile routes up to the layer below project_top_metal_layer. Its horizontal power stripes on that layer are its power pins:
-    the vertical power stripes of the container project, on project_top_metal_layer, cross them. """
+    the vertical power stripes of the container project, on project_top_metal_layer, cross them, and the tools connect them where they cross.
+    The placement of the horizontal stripes (PDN_HWIDTH, PDN_HSPACING, PDN_HPITCH, PDN_HOFFSET) is a default that the micro tile's src/config.json may override. """
     micro_librelane_config: Dict[str, Union[bool, int, float, str]]
     """ These layers will be removed from the SVG render of the layout """
     label_layers: List[Tuple[int, int]]
