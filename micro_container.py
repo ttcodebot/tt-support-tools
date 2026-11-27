@@ -7,11 +7,20 @@ in submission order (sort_id), and every group gets a container: an ordinary 1x1
 rest of the flow, generated into projects/<group>/ and not committed. Slot i of a container is
 selected with uio_in[1:0] == i; empty slots hold a filler micro tile.
 
-All micro tiles of a PDK share one interface geometry: the outline, the signal pins (DEF
-template) and the power stripes (micro_librelane_config). So the container is hardened once,
-around four copies of a placeholder macro ("slot") that has just that interface, and frozen in
-tech/<pdk>/micro_container. A container for four real micro tiles is the frozen layout with the
-placeholders swapped for the micro tile layouts: no place and route.
+All micro tiles of a PDK share one interface geometry: the outline and the signal pins (DEF
+template). So the container is hardened once, around four copies of a placeholder macro
+("slot") that has just that interface, and frozen in tech/<pdk>/micro_container. A container
+for four real micro tiles is the frozen layout with the placeholders swapped for the micro tile
+layouts: no place and route.
+
+Power: the frozen container has its vertical power stripes (one layer above the micro tile's top
+layer) over the slots, and no vias into them. A micro tile places its own power shapes on its
+top layer. The tools draw a via array wherever a container stripe crosses a micro tile power
+shape of the same net (power_vias), as the multiplexer's pdngen macro grid does for regular
+projects. A micro tile must have, for each net and in every slot, at least min_crossings such
+crossings of at least min_cuts x min_cuts cuts (power_rule_errors, also run by the precheck).
+The vias lie inside metal of their own net on both layers, so they add no spacing to any other
+shape; the cuts are the only new shapes, and the micro tile has none on that layer.
 
 Antenna: the container reaches a slot pin only through a jumper drawn by the tools (via3 on the
 pin, a met4 bridge, via3 down onto a met3 landing pad, which is the slot's LEF pin). Container
@@ -43,12 +52,10 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import klayout.db as pya
 import yaml
-
-from tech import TechName, tech_map
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -63,13 +70,29 @@ GROUP_MARKER = "micro_tile_group"
 LAYOUT_EXTENSIONS = ("oas", "lef", "v")
 
 Box = Tuple[float, float, float, float]
+POWER_NETS = ("VPWR", "VGND")
+# Older micro tiles may call their power pin VDPWR
+POWER_PIN_ALIASES = {"VDPWR": "VPWR"}
+
+
+@dataclass(frozen=True)
+class PowerViaRule:
+    """The via array the tools draw where a container power stripe crosses a micro tile power
+    shape of the same net, in microns."""
+
+    cut: float
+    spacing: float
+    # Of every cut, by the micro tile's metal below and by the container's stripe above
+    enclosure: float
+    grid: float
+    # A crossing counts if it holds at least min_cuts x min_cuts cuts; every net needs at
+    # least min_crossings of them in every slot
+    min_cuts: int
+    min_crossings: int
 
 
 @dataclass(frozen=True)
 class MicroContainerTech:
-    site: Tuple[float, float]
-    # Core margins of a micro tile: left/right in sites, top/bottom in rows
-    margin_sites: Tuple[int, int]
     # GDS layer/datatype of drawing, pin and label, per layer the container connects to
     layer_gds: Dict[str, Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]
     prboundary: Tuple[int, int]
@@ -91,6 +114,11 @@ class MicroContainerTech:
     via_size: float
     bridge_half_width: float
     stack_gds: Dict[str, Tuple[int, int]]
+    # Layer of the container's power stripes over the slots, the cut layer below it, and the
+    # vias the tools draw onto the micro tile's power shapes on its top routing layer
+    stripe_layer: str
+    power_cut_layer: str
+    power_via: PowerViaRule
     # Width of the pin strip at the pin edge: nothing but the pins may be in it
     strip_width: float
     # Wire ends may stick out of a pin only this close to the strip's inner edge
@@ -103,8 +131,6 @@ class MicroContainerTech:
 
 MICRO_CONTAINER_TECH: Dict[str, MicroContainerTech] = {
     "sky130A": MicroContainerTech(
-        site=(0.46, 2.72),
-        margin_sites=(6, 1),
         layer_gds={
             "met3": ((70, 20), (70, 16), (70, 5)),
             "met4": ((71, 20), (71, 16), (71, 5)),
@@ -132,6 +158,13 @@ MICRO_CONTAINER_TECH: Dict[str, MicroContainerTech] = {
         via_size=0.2,
         bridge_half_width=0.165,
         stack_gds={"via3": (70, 44), "met3": (70, 20), "met4": (71, 20)},
+        stripe_layer="met4",
+        power_cut_layer="via3",
+        # via3.1/.2: 0.2 um cuts 0.2 um apart; via3.4/.5 (met3 0.06, 0.09 on one of two
+        # adjacent sides) and m4.3 (met4 0.065): 0.1 um all round
+        power_via=PowerViaRule(
+            cut=0.2, spacing=0.2, enclosure=0.1, grid=0.005, min_cuts=2, min_crossings=2
+        ),
         strip_width=1.0,
         strip_tolerance=0.05,
         slots=(
@@ -154,8 +187,12 @@ def frozen_dir(pdk: str) -> str:
     return os.path.join(SCRIPT_DIR, "tech", pdk, "micro_container")
 
 
+def has_container(pdk: str) -> bool:
+    return pdk in MICRO_CONTAINER_TECH and os.path.isdir(frozen_dir(pdk))
+
+
 def get_tech(pdk: str) -> MicroContainerTech:
-    if pdk not in MICRO_CONTAINER_TECH or not os.path.isdir(frozen_dir(pdk)):
+    if not has_container(pdk):
         raise MicroTileError(f"micro tile containers are not available for {pdk}")
     return MICRO_CONTAINER_TECH[pdk]
 
@@ -310,8 +347,7 @@ def remove_stale_groups(project_dir: str, keep: Sequence[str]):
 
 
 def micro_tile_interface(pdk: str):
-    """Outline, signal pins and power stripes of a micro tile, from the tools' own data."""
-    t = MICRO_CONTAINER_TECH[pdk]
+    """Outline and signal pins of a micro tile, from the tools' own data."""
     with open(os.path.join(SCRIPT_DIR, f"tech/{pdk}/tile_sizes.yaml")) as f:
         _, _, width, height = map(float, yaml.safe_load(f)["micro"].split())
     with open(os.path.join(SCRIPT_DIR, f"tech/{pdk}/def/tt_block_micro_pg.def")) as f:
@@ -330,53 +366,34 @@ def micro_tile_interface(pdk: str):
     assert (
         len(pins) == 18
     ), f"expected 18 signal pins in the micro tile template of {pdk}"
-
-    pdn = tech_map[cast(TechName, pdk)].micro_librelane_config
-    core = (
-        t.margin_sites[0] * t.site[0],
-        t.margin_sites[1] * t.site[1],
-        width - t.margin_sites[0] * t.site[0],
-        height - t.margin_sites[1] * t.site[1],
-    )
-    layer = str(pdn["PDN_HORIZONTAL_LAYER"])
-    w, pitch, offset, spacing = (
-        float(pdn[k])
-        for k in ("PDN_HWIDTH", "PDN_HPITCH", "PDN_HOFFSET", "PDN_HSPACING")
-    )
-    stripes: Dict[str, List[Box]] = {"VPWR": [], "VGND": []}
-    y = core[1] + offset
-    while y + w / 2 <= core[3]:
-        stripes["VPWR"].append(
-            (core[0], round(y - w / 2, 3), core[2], round(y + w / 2, 3))
-        )
-        yg = y + w + spacing
-        if yg + w / 2 <= core[3]:
-            stripes["VGND"].append(
-                (core[0], round(yg - w / 2, 3), core[2], round(yg + w / 2, 3))
-            )
-        y += pitch
-    return width, height, pins, layer, stripes
+    return width, height, pins
 
 
 def template_interface(pdk: str):
     """What lef_interface() must return for every micro tile LEF."""
-    width, height, pins, power_layer, stripes = micro_tile_interface(pdk)
+    width, height, pins = micro_tile_interface(pdk)
     result = [
         (name, layer, tuple(round(v, 3) for v in r)) for name, _, layer, r in pins
-    ]
-    result += [
-        (net, power_layer, tuple(round(v, 3) for v in s))
-        for net in stripes
-        for s in stripes[net]
     ]
     return (width, height), sorted(result)
 
 
+def lef_pins(lef_text: str):
+    """(name, body) of every PIN of a LEF."""
+    return re.findall(r"  PIN (\S+)\n(.*?)  END \1\n", lef_text, re.S)
+
+
+def is_power_pin(body: str) -> bool:
+    return bool(re.search(r"USE (POWER|GROUND) ;", body))
+
+
 def lef_interface(lef_text: str, pdk: str):
-    """Pin geometry of a LEF macro on the layers a container connects to."""
+    """Signal pin geometry of a LEF macro on the layers a container connects to."""
     t = MICRO_CONTAINER_TECH[pdk]
     result = []
-    for name, body in re.findall(r"  PIN (\S+)\n(.*?)  END \1\n", lef_text, re.S):
+    for name, body in lef_pins(lef_text):
+        if is_power_pin(body):
+            continue
         for layer, r in re.findall(r"LAYER (\S+) ;\s+RECT ([\d. -]+) ;", body):
             if layer in t.layer_gds:
                 result.append(
@@ -432,10 +449,187 @@ def insert_pin_stacks(pdk: str, layout: pya.Layout, cell: pya.Cell, trans):
             )
 
 
-def write_placeholder(pdk: str, out_dir: str):
-    """Writes the slot macro (LEF, GDS, Verilog) the generic container is hardened with."""
+# --- Power ------------------------------------------------------------------------------
+
+DBU = 0.001
+
+
+def to_box(b: pya.Box) -> Box:
+    d = b.to_dtype(DBU)
+    return (round(d.left, 3), round(d.bottom, 3), round(d.right, 3), round(d.top, 3))
+
+
+def slot_trans(pdk: str, index: int) -> pya.DTrans:
+    """Placement of slot `index` in the container: micro tile to container coordinates."""
     t = MICRO_CONTAINER_TECH[pdk]
-    width, height, pins, power_layer, stripes = micro_tile_interface(pdk)
+    width = micro_tile_interface(pdk)[0]
+    (x, y), orientation = t.slots[index]
+    if orientation == "N":
+        return pya.DTrans(pya.DVector(x, y))
+    assert orientation == "FN", orientation
+    return pya.DTrans(pya.DTrans.M90, pya.DVector(x + width, y))
+
+
+def container_power_stripes(pdk: str) -> Dict[str, List[Box]]:
+    """The frozen container's power stripes (its VPWR/VGND ports), in its coordinates."""
+    t = get_tech(pdk)
+    with open(os.path.join(frozen_dir(pdk), f"{GENERIC}.lef")) as f:
+        lef_text = f.read()
+    stripes: Dict[str, List[Box]] = {net: [] for net in POWER_NETS}
+    for name, body in lef_pins(lef_text):
+        if name in stripes:
+            for layer, r in re.findall(r"LAYER (\S+) ;\s+RECT ([\d. -]+) ;", body):
+                if layer == t.stripe_layer:
+                    stripes[name].append(tuple(float(v) for v in r.split()))  # type: ignore[arg-type]
+    return stripes
+
+
+def slot_power_stripes(pdk: str, index: int) -> Dict[str, List[Box]]:
+    """The container's power stripes over slot `index`, in the micro tile's coordinates and
+    clipped to its outline."""
+    width, height = micro_tile_interface(pdk)[:2]
+    outline = pya.DBox(0, 0, width, height)
+    to_tile = slot_trans(pdk, index).inverted()
+    result: Dict[str, List[Box]] = {}
+    for net, stripes in container_power_stripes(pdk).items():
+        result[net] = []
+        for stripe in stripes:
+            clipped = pya.DBox(*stripe).transformed(to_tile) & outline
+            if clipped.width() > 0 and clipped.height() > 0:
+                result[net].append(to_box(clipped.to_itype(DBU)))
+    return result
+
+
+def lef_power_shapes(lef_text: str, pdk: str) -> Dict[str, List[Box]]:
+    """Power port rectangles of a micro tile LEF on its top routing layer, per net."""
+    t = MICRO_CONTAINER_TECH[pdk]
+    shapes: Dict[str, List[Box]] = {net: [] for net in POWER_NETS}
+    for name, body in lef_pins(lef_text):
+        net = POWER_PIN_ALIASES.get(name, name)
+        if net not in shapes or not is_power_pin(body):
+            continue
+        for layer, r in re.findall(r"LAYER (\S+) ;\s+RECT ([\d. -]+) ;", body):
+            if layer == t.routing_layers[-1]:
+                shapes[net].append(tuple(float(v) for v in r.split()))  # type: ignore[arg-type]
+    return shapes
+
+
+def via_array(rule: PowerViaRule, crossing: pya.Box) -> List[pya.Box]:
+    """The largest array of cuts that fits in `crossing` with the enclosure, on the grid."""
+    cut, space, enc, grid = (
+        round(v / DBU) for v in (rule.cut, rule.spacing, rule.enclosure, rule.grid)
+    )
+
+    def axis(lo: int, hi: int) -> List[int]:
+        lo, hi = lo + enc, hi - enc
+        n = (hi - lo + space) // (cut + space)
+        while n > 0:
+            size = n * cut + (n - 1) * space
+            start = -(-(lo + (hi - lo - size) // 2) // grid) * grid
+            if start + size > hi:
+                start = (hi - size) // grid * grid
+            if start >= lo:
+                return [start + i * (cut + space) for i in range(n)]
+            n -= 1
+        return []
+
+    xs = axis(crossing.left, crossing.right)
+    ys = axis(crossing.bottom, crossing.top)
+    return [pya.Box(x, y, x + cut, y + cut) for y in ys for x in xs]
+
+
+def power_vias(
+    pdk: str, shapes: Dict[str, List[Box]], index: int
+) -> Dict[str, List[Tuple[Box, List[Box]]]]:
+    """The power connections of a micro tile in slot `index`: per net, every crossing of a
+    container stripe with the micro tile's power shapes of that net that holds at least
+    min_cuts x min_cuts cuts, as (crossing, cuts) in the micro tile's coordinates."""
+    t = MICRO_CONTAINER_TECH[pdk]
+    rule = t.power_via
+    stripes = slot_power_stripes(pdk, index)
+    result: Dict[str, List[Tuple[Box, List[Box]]]] = {}
+    for net in POWER_NETS:
+        own = pya.Region()
+        for s in shapes.get(net, []):
+            own.insert(pya.DBox(*s).to_itype(DBU))
+        own.merge()
+        result[net] = []
+        for stripe in stripes[net]:
+            crossings = own & pya.Region(pya.DBox(*stripe).to_itype(DBU))
+            for polygon in crossings.each():
+                # A merged crossing that is not a rectangle: use its largest rectangle
+                rects = [
+                    p.bbox()
+                    for p in pya.Region(polygon).decompose_trapezoids_to_region().each()
+                ]
+                rect = max(rects, key=lambda b: (b.area(), b.left, b.bottom))
+                cuts = via_array(rule, rect)
+                columns = len({c.left for c in cuts})
+                rows = len({c.bottom for c in cuts})
+                if columns >= rule.min_cuts and rows >= rule.min_cuts:
+                    result[net].append((to_box(rect), [to_box(c) for c in cuts]))
+    return result
+
+
+def power_rule_errors(
+    pdk: str, shapes: Dict[str, List[Box]], nets: Sequence[str] = POWER_NETS
+) -> List[str]:
+    """Checks the power rule of a micro tile for every slot it can be placed in. `shapes` are
+    its power shapes on its top routing layer (lef_power_shapes)."""
+    t = MICRO_CONTAINER_TECH[pdk]
+    rule = t.power_via
+    top_layer = t.routing_layers[-1]
+    errors = []
+    for net in nets:
+        if not shapes.get(net):
+            errors.append(f"no {net} port on {top_layer}")
+            continue
+        for index, (_, orientation) in enumerate(t.slots):
+            found = len(power_vias(pdk, shapes, index)[net])
+            if found < rule.min_crossings:
+                xs = ", ".join(
+                    f"{s[0]:.2f}-{s[2]:.2f}"
+                    for s in slot_power_stripes(pdk, index)[net]
+                )
+                errors.append(
+                    f"{net} connects to the container in {found} places in slot {index} "
+                    f"({'mirrored' if orientation == 'FN' else 'not mirrored'}), at least "
+                    f"{rule.min_crossings} needed: the container's {t.stripe_layer} {net} stripes "
+                    f"cross the micro tile at x = {xs} um there, and each crossing with a "
+                    f"{net} {top_layer} shape must fit {rule.min_cuts}x{rule.min_cuts} "
+                    f"{t.power_cut_layer} cuts ({rule.cut} um, {rule.spacing} um apart, "
+                    f"{rule.enclosure} um enclosure)"
+                )
+                break
+    return errors
+
+
+def insert_power_vias(
+    pdk: str,
+    layout: pya.Layout,
+    cell: pya.Cell,
+    vias: Dict[str, List[Tuple[Box, List[Box]]]],
+    trans,
+):
+    """Draws the power vias of one slot in the container's top cell: the cuts, and a patch of
+    the micro tile's top layer on each crossing (inside the micro tile's own shape there).
+    """
+    t = MICRO_CONTAINER_TECH[pdk]
+    top_layer = layout.layer(*t.stack_gds[t.routing_layers[-1]])
+    cut_layer = layout.layer(*t.stack_gds[t.power_cut_layer])
+    for crossings in vias.values():
+        for crossing, cuts in crossings:
+            cell.shapes(top_layer).insert(pya.DBox(*crossing).transformed(trans))
+            for c in cuts:
+                cell.shapes(cut_layer).insert(pya.DBox(*c).transformed(trans))
+
+
+def write_placeholder(pdk: str, out_dir: str):
+    """Writes the slot macro (LEF, GDS, Verilog) the generic container is hardened with. It
+    has no power pins: the container's power stripes run over it and the tools connect them
+    to each micro tile at assembly (power_vias)."""
+    t = MICRO_CONTAINER_TECH[pdk]
+    width, height, pins = micro_tile_interface(pdk)
     os.makedirs(out_dir, exist_ok=True)
 
     def rect(r) -> str:
@@ -452,16 +646,6 @@ def write_placeholder(pdk: str, out_dir: str):
         "  ORIGIN 0.000 0.000 ;",
         f"  SIZE {width:.3f} BY {height:.3f} ;",
     ]
-    for net, use in (("VGND", "GROUND"), ("VPWR", "POWER")):
-        lef += [f"  PIN {net}", "    DIRECTION INOUT ;", f"    USE {use} ;"]
-        for stripe in stripes[net]:
-            lef += [
-                "    PORT",
-                f"      LAYER {power_layer} ;",
-                f"        {rect(stripe)}",
-                "    END",
-            ]
-        lef += [f"  END {net}"]
     for name, direction, layer, r in pins:
         lef += [f"  PIN {name}", f"    DIRECTION {direction} ;", "    USE SIGNAL ;"]
         if direction == "INPUT":
@@ -503,11 +687,8 @@ def write_placeholder(pdk: str, out_dir: str):
         obs = inner
         if layer == below_pin:
             obs = inner + pin_rows
-        if layer == power_layer or any(p[2] == layer for p in pins):
-            keep = pin_keep.dup()
-            for r in [s for net in stripes.values() for s in net]:
-                keep.insert(pya.DBox(*r).to_itype(dbu))
-            obs = outline - keep
+        if any(p[2] == layer for p in pins):
+            obs = outline - pin_keep
         lef += [f"      LAYER {layer} ;"]
         for trap in obs.decompose_trapezoids_to_region().each():
             b = trap.bbox().to_dtype(dbu)
@@ -523,14 +704,12 @@ def write_placeholder(pdk: str, out_dir: str):
     with open(os.path.join(out_dir, f"{SLOT}.lef"), "w") as f:
         f.write("\n".join(lef))
 
-    # GDS: outline, pins, power stripes and the jumpers
+    # GDS: outline, pins and the jumpers
     layout = pya.Layout()
     layout.dbu = dbu
     cell = layout.create_cell(SLOT)
     cell.shapes(layout.layer(*t.prboundary)).insert(pya.DBox(0, 0, width, height))
-    shapes = [(name, layer, r) for name, _, layer, r in pins]
-    shapes += [(net, power_layer, s) for net in stripes for s in stripes[net]]
-    for name, layer, r in shapes:
+    for name, _, layer, r in pins:
         drawing, pin, label = t.layer_gds[layer]
         pin_box = pya.DBox(*r)
         cell.shapes(layout.layer(*drawing)).insert(pin_box)
@@ -543,11 +722,10 @@ def write_placeholder(pdk: str, out_dir: str):
 
     with open(os.path.join(out_dir, f"{SLOT}.v"), "w") as f:
         f.write(
-            f"""// Placeholder for a micro tile: black box with the micro tile ports
+            f"""// Placeholder for a micro tile: black box with the micro tile signal ports. The
+// tools connect the power of the micro tile that replaces it.
 (* blackbox *)
 module {SLOT} (
-    inout  wire       VPWR,
-    inout  wire       VGND,
     input  wire       clk,
     input  wire       rst_n,
     input  wire [7:0] ui_in,
@@ -572,20 +750,23 @@ def micro_tile_layout_path(micro_dir: str, macro: str) -> str:
 def check_micro_tile(pdk: str, micro_dir: str, macro: str) -> List[str]:
     """Checks that a micro tile can be dropped into the generic container. Returns a list of
     problems (empty if none):
-    - pins and power stripes at the template positions (LEF),
+    - signal pins at the template positions (LEF),
+    - the power rule (power_rule_errors) for the LEF power ports on the top layer, and the
+      layout has metal under all of them,
     - every input that reaches a gate has at least the gate area the placeholder declares,
     - nothing on the container's layers (pin access via and above),
     - nothing but the pins in the pin strip on the pin layer, where the tools draw the
-      jumpers. The frozen container has no metal of its own over a slot on the layers below
-      (test_micro_container.py), so the micro tile may use them up to its edge."""
+      jumpers. The frozen container has no metal of its own over a slot on the micro tile's
+      routing layers (test_micro_container.py), so the micro tile may use them up to its edge.
+    """
     t = MICRO_CONTAINER_TECH[pdk]
     errors = []
     with open(os.path.join(micro_dir, f"{macro}.lef")) as f:
         lef_text = f.read()
     if lef_interface(lef_text, pdk) != template_interface(pdk):
-        errors.append(
-            "pins or power stripes are not at the micro tile template positions"
-        )
+        errors.append("signal pins are not at the micro tile template positions")
+    power_shapes = lef_power_shapes(lef_text, pdk)
+    errors += power_rule_errors(pdk, power_shapes)
     macro_lef = re.search(
         rf"MACRO {re.escape(macro)}\n(.*?)END {re.escape(macro)}\n", lef_text, re.S
     )
@@ -625,14 +806,26 @@ def check_micro_tile(pdk: str, micro_dir: str, macro: str) -> List[str]:
         )
     )
     index = layout.find_layer(*t.routing_gds[pin_layer])
-    if index is not None:
-        region = (pya.Region(top.begin_shapes_rec(index)).merged() & strip) - pins
-        area = region.area() * layout.dbu**2
-        if area > 1e-6:
-            b = region.bbox().to_dtype(layout.dbu)
-            errors.append(
-                f"{area:.3f} um2 of {pin_layer} in the pin strip (x > {width - t.strip_width:.2f}) apart from the pins, around {b}"
-            )
+    metal = (
+        pya.Region(top.begin_shapes_rec(index)).merged()
+        if index is not None
+        else pya.Region()
+    )
+    region = (metal & strip) - pins
+    area = region.area() * layout.dbu**2
+    if area > 1e-6:
+        b = region.bbox().to_dtype(layout.dbu)
+        errors.append(
+            f"{area:.3f} um2 of {pin_layer} in the pin strip (x > {width - t.strip_width:.2f}) apart from the pins, around {b}"
+        )
+    # The tools draw the power vias onto the LEF power ports: the layout must have them
+    for net, shapes in power_shapes.items():
+        for s in shapes:
+            missing = pya.Region(pya.DBox(*s).to_itype(layout.dbu)) - metal
+            if not missing.is_empty():
+                errors.append(
+                    f"{net} port {s} on {pin_layer} in the LEF is not all {pin_layer} in the layout"
+                )
     return errors
 
 
@@ -801,8 +994,24 @@ def assemble(
             )
         else:
             logging.info(f"  slot {index}: {macro}")
+        trans = by_slot[index].dcplx_trans
+        assert trans == pya.DCplxTrans(slot_trans(pdk, index)), trans
         # The jumpers on the pins belong to the container: keep them when the slot goes
-        insert_pin_stacks(pdk, layout, top_cell, by_slot[index].dcplx_trans)
+        insert_pin_stacks(pdk, layout, top_cell, trans)
+        with open(os.path.join(micro_dir, f"{macro}.lef")) as f:
+            power_shapes = lef_power_shapes(f.read(), pdk)
+        vias = power_vias(pdk, power_shapes, index)
+        for net in POWER_NETS:
+            if len(vias[net]) < t.power_via.min_crossings:
+                raise MicroTileError(f"{macro}: {net} does not fit the power rule")
+        insert_power_vias(pdk, layout, top_cell, vias, trans)
+        logging.info(
+            "    power: "
+            + ", ".join(
+                f"{net} {len(vias[net])} crossings, {sum(len(c) for _, c in vias[net])} cuts"
+                for net in POWER_NETS
+            )
+        )
         by_slot[index].cell_index = cell.cell_index()
         macros.append(macro)
     layout.delete_cell(slot_cell.cell_index())
@@ -817,11 +1026,16 @@ def assemble(
 
     with open(os.path.join(frozen, f"{GENERIC}.v")) as f:
         netlist = f.read()
+    for ports in re.findall(rf"\b{SLOT}\s+proj\d+\s*\((.*?)\);", netlist, re.S):
+        assert "VPWR" not in ports and "VGND" not in ports
     netlist, count = re.subn(rf"\bmodule {GENERIC}\b", f"module {top}", netlist)
     assert count == 1
     for index, macro in enumerate(macros):
+        # The slots have no power pins: connect the micro tile's
         netlist, count = re.subn(
-            rf"\b{SLOT}(\s+)proj{index + 1}\b", rf"{macro}\1proj{index + 1}", netlist
+            rf"\b{SLOT}(\s+)proj{index + 1}(\s*)\(",
+            rf"{macro}\1proj{index + 1}\2(.VGND(VGND),\n    .VPWR(VPWR),\n    ",
+            netlist,
         )
         assert count == 1, f"instance proj{index + 1} not found in the generic netlist"
     assert SLOT not in netlist

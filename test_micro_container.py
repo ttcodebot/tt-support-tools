@@ -156,8 +156,9 @@ def test_placeholder_matches_frozen_slot(tmp_path):
 
 
 def test_frozen_container_leaves_the_slots_to_the_micro_tiles():
-    """No container metal over a slot on the micro tile's routing layers, apart from the
-    power connection on the pin layer and nothing at all in the pin strip."""
+    """No container metal over a slot on the micro tile's routing layers and no cuts onto
+    them: the power vias and the jumpers are drawn at assembly. The container's power
+    stripes run over every slot, clear of the pin strip."""
     t = mc.MICRO_CONTAINER_TECH[PDK]
     mc.verify_frozen(PDK)
     layout = pya.Layout()
@@ -166,22 +167,32 @@ def test_frozen_container_leaves_the_slots_to_the_micro_tiles():
     (width, height), _ = mc.template_interface(PDK)
     slots = [i for i in top.each_inst() if i.cell.name == mc.SLOT]
     assert len(slots) == len(t.slots)
+    cuts = pya.Region(top.shapes(layout.find_layer(*t.stack_gds[t.power_cut_layer])))
+    stripe_metal = pya.Region(
+        top.shapes(layout.find_layer(*t.stack_gds[t.stripe_layer]))
+    )
     for inst in slots:
         trans = inst.dcplx_trans
         slot = pya.Region(
             pya.DBox(0, 0, width, height).transformed(trans).to_itype(layout.dbu)
         )
-        strip = pya.Region(
-            pya.DBox(width - t.strip_width, 0, width, height)
-            .transformed(trans)
-            .to_itype(layout.dbu)
-        )
         for name in t.routing_layers:
             own = pya.Region(top.shapes(layout.find_layer(*t.routing_gds[name])))
-            if name == t.routing_layers[-1]:
-                assert (own & strip).is_empty()
-            else:
-                assert (own & slot).is_empty(), name
+            assert (own & slot).is_empty(), name
+        assert (cuts & slot).is_empty()
+        index = next(
+            i
+            for i in range(len(t.slots))
+            if trans == pya.DCplxTrans(mc.slot_trans(PDK, i))
+        )
+        stripes = mc.slot_power_stripes(PDK, index)
+        assert [len(stripes[net]) for net in mc.POWER_NETS] == [3, 3]
+        for net in mc.POWER_NETS:
+            for s in stripes[net]:
+                box = pya.DBox(*s)
+                assert box.right < width - t.strip_width
+                drawn = pya.Region(box.transformed(trans).to_itype(layout.dbu))
+                assert (drawn - stripe_metal).is_empty()
 
 
 def test_filler_fits():
@@ -200,9 +211,194 @@ def test_interface_check_rejects_moved_pins(tmp_path):
     )
     assert "RECT 69.380 2.910" in lef
     errors = mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER)
-    assert errors[0] == (
-        "pins or power stripes are not at the micro tile template positions"
+    assert errors[0] == "signal pins are not at the micro tile template positions"
+
+
+def edit_power_stripes(src_dir, macro, dst_dir, new_macro, edits):
+    """A copy of micro tile `macro` named `new_macro`, with some of its met3 power stripes
+    changed: `edits` maps the box of an existing stripe to a list of new boxes (none:
+    removed, two: copied). The via2 cuts under a stripe move with it vertically when they
+    stay on it: on the filler, whose met2 power stripes run the full height and which has
+    no other met3 than its pins, the result is still DRC and LVS clean."""
+    layout = pya.Layout()
+    layout.read(os.path.join(src_dir, f"{macro}.oas"))
+    top = layout.cell(macro)
+    drawing, pin, label = mc.MICRO_CONTAINER_TECH[PDK].layer_gds["met3"]
+    via2 = layout.find_layer(69, 44)
+    with open(os.path.join(src_dir, f"{macro}.lef")) as f:
+        lef = f.read()
+    for old, new_boxes in edits.items():
+        old_box = pya.DBox(*old)
+        for layer in (drawing, pin):
+            shapes = layout.find_layer(*layer)
+            found = [s for s in top.shapes(shapes).each() if s.dbbox() == old_box]
+            assert len(found) == 1, (layer, old)
+            top.shapes(shapes).erase(found[0])
+            for b in new_boxes:
+                top.shapes(shapes).insert(pya.DBox(*b))
+        labels = layout.find_layer(*label)
+        for s in list(top.shapes(labels).each()):
+            if s.is_text() and old_box.contains(s.dtext.position()):
+                text = s.dtext
+                top.shapes(labels).erase(s)
+                for b in new_boxes:
+                    top.shapes(labels).insert(text.moved(0, b[1] - old[1]))
+        under = [
+            s for s in top.shapes(via2).each() if old_box.contains(s.dbbox().center())
+        ]
+        for s in under:
+            cut = s.dbbox()
+            top.shapes(via2).erase(s)
+            for b in new_boxes:
+                moved = cut.moved(0, b[1] - old[1])
+                inner = pya.DBox(*b).enlarged(-0.065, -0.065)
+                if inner.contains(moved.p1) and inner.contains(moved.p2):
+                    top.shapes(via2).insert(moved)
+        old_rect = "RECT " + " ".join(f"{v:.3f}" for v in old) + " ;"
+        assert lef.count(old_rect) == 1, old_rect
+        new_rects = [
+            "RECT " + " ".join(f"{v:.3f}" for v in b) + " ;" for b in new_boxes
+        ]
+        lef = lef.replace(old_rect, "\n      LAYER met3 ;\n        ".join(new_rects))
+    top.name = new_macro
+    os.makedirs(dst_dir, exist_ok=True)
+    layout.write(os.path.join(dst_dir, f"{new_macro}.oas"))
+    with open(os.path.join(dst_dir, f"{new_macro}.lef"), "w") as f:
+        f.write(re.sub(rf"\b{macro}\b", new_macro, lef))
+    with open(os.path.join(src_dir, f"{macro}.v")) as f:
+        netlist = f.read()
+    with open(os.path.join(dst_dir, f"{new_macro}.v"), "w") as f:
+        f.write(re.sub(rf"\b{macro}\b", new_macro, netlist))
+    return dst_dir, new_macro
+
+
+# Power stripes of the filler: the tools' default micro tile power grid
+VPWR_LOW = (2.76, 9.02, 67.62, 10.02)
+VPWR_HIGH = (2.76, 30.78, 67.62, 31.78)
+VGND_LOW = (2.76, 19.9, 67.62, 20.9)
+VGND_HIGH = (2.76, 41.66, 67.62, 42.66)
+
+
+def counts(vias):
+    return {net: (len(v), sum(len(c) for _, c in v)) for net, v in vias.items()}
+
+
+def test_power_vias_of_the_default_grid():
+    """The default stripes get the vias LibreLane's PDN drew into the previous frozen
+    container: 4x2 cuts on each of 6 crossings per net, in every slot."""
+    with open(os.path.join(mc.frozen_dir(PDK), f"{mc.FILLER}.lef")) as f:
+        shapes = mc.lef_power_shapes(f.read(), PDK)
+    assert shapes == {"VPWR": [VPWR_LOW, VPWR_HIGH], "VGND": [VGND_LOW, VGND_HIGH]}
+    assert mc.power_rule_errors(PDK, shapes) == []
+    for index in range(4):
+        vias = mc.power_vias(PDK, shapes, index)
+        assert counts(vias) == {"VPWR": (6, 48), "VGND": (6, 48)}
+    crossing, cuts = mc.power_vias(PDK, shapes, 0)["VPWR"][0]
+    assert crossing == (9.32, 9.02, 10.92, 10.02)
+    assert cuts[0] == (9.42, 9.22, 9.62, 9.42)
+    assert cuts[-1] == (10.62, 9.62, 10.82, 9.82)
+
+
+def test_via_array_fits_and_stays_on_grid():
+    rule = mc.MICRO_CONTAINER_TECH[PDK].power_via
+    for crossing in [(0, 0, 1600, 800), (3, 7, 1003, 1250), (0, 0, 799, 2000)]:
+        box = pya.Box(*crossing)
+        inner = box.enlarged(-100, -100)
+        cuts = mc.via_array(rule, box)
+        assert cuts
+        for c in cuts:
+            assert c.left % 5 == 0 and c.bottom % 5 == 0
+            assert c.width() == c.height() == 200
+            assert inner.contains(c.p1) and inner.contains(c.p2)
+    assert mc.via_array(rule, pya.Box(0, 0, 1600, 350)) == []
+
+
+def test_moved_extra_and_wide_stripes(tmp_path):
+    """A VPWR stripe moved and a 1.6 um one added low down, a VGND stripe moved and made
+    0.8 um wide: accepted, and connected where they cross the container's stripes."""
+    tile_dir, macro = edit_power_stripes(
+        mc.frozen_dir(PDK),
+        mc.FILLER,
+        str(tmp_path / "tile"),
+        "tt_um_test_moved",
+        {
+            VPWR_LOW: [(2.76, 14.22, 67.62, 15.22), (2.76, 3.0, 67.62, 4.6)],
+            VGND_HIGH: [(2.76, 46.0, 67.62, 46.8)],
+        },
     )
+    assert mc.check_micro_tile(PDK, tile_dir, macro) == []
+    with open(os.path.join(tile_dir, f"{macro}.lef")) as f:
+        shapes = mc.lef_power_shapes(f.read(), PDK)
+    # 4x2 cuts per crossing of a 1 um or 0.8 um stripe, 4x4 for the 1.6 um one
+    for index in range(4):
+        vias = mc.power_vias(PDK, shapes, index)
+        assert counts(vias) == {"VPWR": (9, 6 * 8 + 3 * 16), "VGND": (6, 48)}
+    top = "tt_um_micro_tiles_group_8"
+    out = tmp_path / "out"
+    mc.assemble(PDK, top, str(out), [None, (tile_dir, macro), None, None])
+    layout = pya.Layout()
+    layout.read(str(out / f"{top}.oas"))
+    cell = layout.cell(top)
+    drawn = pya.Region(cell.shapes(layout.find_layer(70, 44)))
+    trans = mc.slot_trans(PDK, 1)
+    for crossings in mc.power_vias(PDK, shapes, 1).values():
+        for _, cuts in crossings:
+            for c in cuts:
+                via = pya.Region(pya.DBox(*c).transformed(trans).to_itype(0.001))
+                assert (via - drawn).is_empty()
+    with open(out / f"{top}.v") as f:
+        netlist = f.read()
+    assert re.search(
+        rf"^ {macro} proj2 \(\.VGND\(VGND\),\s+\.VPWR\(VPWR\),\s+\.clk", netlist, re.M
+    )
+
+
+def test_too_few_crossings_are_rejected(tmp_path):
+    """VPWR stripes that reach only the first container VPWR stripe, and none when the
+    micro tile is mirrored."""
+    tile_dir, macro = edit_power_stripes(
+        mc.frozen_dir(PDK),
+        mc.FILLER,
+        str(tmp_path),
+        "tt_um_test_short",
+        {
+            VPWR_LOW: [(2.76, 9.02, 15.0, 10.02)],
+            VPWR_HIGH: [(2.76, 30.78, 15.0, 31.78)],
+        },
+    )
+    errors = mc.check_micro_tile(PDK, tile_dir, macro)
+    assert len(errors) == 1
+    assert errors[0].startswith(
+        "VPWR connects to the container in 0 places in slot 1 (mirrored), at least 2 "
+        "needed: the container's met4 VPWR stripes cross the micro tile at "
+        "x = 61.76-63.36, 39.68-41.28, 17.60-19.20 um there"
+    )
+    with pytest.raises(mc.MicroTileError, match="VPWR does not fit the power rule"):
+        mc.assemble(
+            PDK,
+            "tt_um_x",
+            str(tmp_path / "out"),
+            [None, (tile_dir, macro)] + [None] * 2,
+        )
+
+
+def test_lef_power_port_without_metal_is_rejected(tmp_path):
+    frozen = mc.frozen_dir(PDK)
+    with open(os.path.join(frozen, f"{mc.FILLER}.lef")) as f:
+        lef = f.read()
+    moved = lef.replace(
+        "RECT 2.760 41.660 67.620 42.660", "RECT 2.760 44.660 67.620 45.660"
+    )
+    assert moved != lef
+    with open(os.path.join(tmp_path, f"{mc.FILLER}.lef"), "w") as f:
+        f.write(moved)
+    os.symlink(
+        os.path.join(frozen, f"{mc.FILLER}.oas"),
+        os.path.join(tmp_path, f"{mc.FILLER}.oas"),
+    )
+    assert mc.check_micro_tile(PDK, str(tmp_path), mc.FILLER) == [
+        "VGND port (2.76, 44.66, 67.62, 45.66) on met3 in the LEF is not all met3 in the layout"
+    ]
 
 
 def test_assemble_fillers(tmp_path):
