@@ -13,11 +13,18 @@ around four copies of a placeholder macro ("slot") that has just that interface,
 tech/<pdk>/micro_container. A container for four real micro tiles is the frozen layout with the
 placeholders swapped for the micro tile layouts: no place and route.
 
-Antenna: the container reaches a slot pin only through a jumper drawn by the tools (via3 on the
-pin, a met4 bridge, via3 down onto a met3 landing pad, which is the slot's LEF pin). Container
-and micro tile metal then meet only on via3/met4, where a micro tile has nothing, so the antenna
-result of an assembled container is that of the frozen container checked alone (with the
-worst-case placeholder) and of each micro tile checked alone.
+DRC: inside a slot the container draws nothing on a micro tile's layers but copies of its pins
+(and the power vias, inside its power stripes); outside the slots it keeps the worst-case
+spacing (edge_clearance) from every slot outline, and the slots of a column are slot_gap apart.
+So a micro tile that is DRC clean on its own, with its pins and stripes at the template
+positions, is DRC clean in the container, whatever it draws up to its outline.
+
+Antenna: the container reaches a slot pin only through a jumper drawn by the tools (the pin,
+extended straight out of the slot, a via3 there, a met4 bridge, via3 down onto a met3 landing
+pad, which is the slot's LEF pin). Container routing and micro tile metal then meet only on
+via3/met4, where a micro tile has nothing, so the antenna result of an assembled container is
+that of the frozen container checked alone (with the worst-case placeholder) and of each micro
+tile checked alone, plus the pin extension (at most 0.25 um2 of met3) on each micro tile input.
 
     python micro_container.py placeholder <pdk> <output dir>
         Writes the placeholder macro the generic container is hardened with:
@@ -84,22 +91,32 @@ class MicroContainerTech:
     forbidden_layers: Tuple[str, ...]
     # Gate area the placeholder declares on every input: the smallest gate of the library
     input_gate_area: float
-    # Met3 enclosure of the via3 that lands on a pin, and its gap to the micro tile interior
-    pad: Tuple[float, float]
-    pad_gap: float
-    # Free pin-layer metal above and below a pin, below the pin layer: no via from below
-    pin_clearance: float
-    # Offset of the jumper's landing pad from its pin, and free pin-layer metal around it
+    # Worst-case spacing (wide metal rules included) that micro tile metal drawn right at its
+    # outline needs from container metal, per routing layer. Outside the slots the container
+    # keeps at least this far from every slot outline; inside a slot it draws nothing but
+    # copies of the micro tile's own pins (and the power vias, inside its power stripes).
+    edge_clearance: Dict[str, float]
+    # The spacing the router keeps from an obstruction (minimum spacing), per routing layer
+    router_spacing: Dict[str, float]
+    # The jumper on every pin, outside the slot: met3 enclosure of a via3 (x, y), the met3
+    # landing pad (the router's pin, x, y), the landing pad's offset from its pin (along the
+    # edge), free pin-layer metal around the landing pad, via3 cut, met4 bridge half width
+    via_pad: Tuple[float, float]
+    landing: Tuple[float, float]
     jump: float
     landing_clearance: float
     via_size: float
     bridge_half_width: float
-    # Width of the pin strip at the pin edge: nothing but the pins may be in it
-    strip_width: float
-    # Wire ends may stick out of a pin only this close to the strip's inner edge
-    strip_tolerance: float
-    # Locations and orientations of the slots in the container, in select order
+    # Lower-left corner of the micro tile outline of each slot in the container, and its
+    # orientation, in select order. Slots of one column are this far apart (slot_gap).
     slots: Tuple[Tuple[Tuple[float, float], str], ...]
+    slot_gap: float
+    # Standard cell layers whose spacing reaches across slot_gap: a micro tile keeps them this
+    # far from its top and bottom edges (where another micro tile faces it)
+    feol_edge_keepout: Dict[str, float]
+    # Layers no standard cell uses whose spacing reaches further than slot_gap or
+    # edge_clearance: a micro tile must not draw them at all
+    forbidden_long_reach: Tuple[str, ...]
     stdcell_spice: str
     stdcell_prefix: str
 
@@ -117,6 +134,15 @@ MICRO_CONTAINER_TECH: Dict[TechName, MicroContainerTech] = {
             "met4": (71, 20),
             "via4": (71, 44),
             "met5": (72, 20),
+            "nwell": (64, 20),
+            "dnwell": (64, 18),
+            "photo": (81, 81),
+            "hvi": (75, 20),
+            "hvntm": (125, 20),
+            "rpm": (86, 20),
+            "urpm": (79, 20),
+            "capm": (89, 44),
+            "capm2": (97, 44),
         },
         pin_label_gds={
             "met3": ((70, 16), (70, 5)),
@@ -125,20 +151,37 @@ MICRO_CONTAINER_TECH: Dict[TechName, MicroContainerTech] = {
         routing_layers=("li1", "met1", "met2", "met3"),
         forbidden_layers=("via3", "met4", "via4", "met5"),
         input_gate_area=0.126,
-        pad=(0.32, 0.38),
-        pad_gap=0.35,
-        pin_clearance=0.45,
+        # li.3; met1.3a/b, met2.3a/b (> 3 um wide); met3.3c/d (> 3 um wide)
+        edge_clearance={"li1": 0.17, "met1": 0.28, "met2": 0.28, "met3": 0.4},
+        router_spacing={"li1": 0.17, "met1": 0.14, "met2": 0.14, "met3": 0.3},
+        via_pad=(0.38, 0.32),
+        landing=(0.64, 0.38),
         jump=1.36,
         landing_clearance=0.6,
         via_size=0.2,
         bridge_half_width=0.165,
-        strip_width=1.0,
-        strip_tolerance=0.05,
         slots=(
             ((0.0, 0.0), "N"),
             ((90.62, 0.0), "FN"),
-            ((0.0, 51.68), "N"),
-            ((90.62, 51.68), "FN"),
+            ((0.0, 52.08), "N"),
+            ((90.62, 52.08), "FN"),
+        ),
+        # The largest metal spacing (met3.3d). Of the standard cell layers only nwell reaches
+        # further (nwell.2a, 1.27 um): 0.435 um from each facing edge plus the gap. The flow's
+        # core margins keep every cell's nwell 2.5 um from the edges.
+        slot_gap=0.4,
+        feol_edge_keepout={"nwell": 0.435},
+        # dnwell.3 6.3 um (4.5 um to nwell), photo.3 5 um, high voltage (hvi 0.7, hvntm
+        # 0.7 um, mv nwell 2 um), poly resistors (rpm/urpm 0.84 um), MiM caps (1.34 um to met3)
+        forbidden_long_reach=(
+            "dnwell",
+            "photo",
+            "hvi",
+            "hvntm",
+            "rpm",
+            "urpm",
+            "capm",
+            "capm2",
         ),
         stdcell_spice="libs.ref/sky130_fd_sc_hd/spice/*.spice",
         stdcell_prefix="sky130_fd_sc_hd__",
@@ -384,35 +427,40 @@ def lef_interface(lef_text: str, pdk: TechName):
     return (float(size.group(1)), float(size.group(2))), sorted(result)
 
 
+def slot_size(pdk: TechName) -> Tuple[float, float]:
+    """Size of the placeholder macro: the micro tile and, beyond its pin edge, the jumpers."""
+    t = MICRO_CONTAINER_TECH[pdk]
+    width, height = template_interface(pdk)[0]
+    return round(width + t.edge_clearance["met3"] + t.landing[0], 3), height
+
+
 def pin_stack(pdk: TechName, r: Box) -> Tuple[Box, List[Tuple[str, Box]]]:
     """The jumper the tools draw on every pin, all of it container metal:
-    - a via3 on the pin, with its met3 pad `pad_gap` away from the micro tile's interior,
-    - a met4 bridge going up (met4's direction) by `jump`, into the free strip between pins,
-    - a via3 down onto a met3 landing pad that runs to the slot edge: the slot's LEF pin.
+    - a copy of the pin, extended straight out of the slot: inside the slot it is the pin
+      itself, outside it is as tall as the pin up to `edge_clearance` (met3) from the slot,
+    - there a via3 with its met3 pad, then a met4 bridge going up (met4's direction) by
+      `jump`, into the free space between the pins,
+    - a via3 down onto a met3 landing pad: the slot's LEF pin, where the container routes to.
+    So micro tile metal that is legal next to its own pin is legal next to the jumper.
     Returns the landing pad and a list of (layer, box)."""
     t = MICRO_CONTAINER_TECH[pdk]
     x1, y1, x2, y2 = r
     cy = (y1 + y2) / 2
     by = cy + t.jump
-    cx = x1 + t.pad_gap + t.pad[0] / 2
+    px1 = x2 + t.edge_clearance["met3"]
+    px2 = px1 + t.via_pad[0]
+    cx = (px1 + px2) / 2
 
     def box(a: float, b: float, c: float, d: float) -> Box:
         return (round(a, 3), round(b, 3), round(c, 3), round(d, 3))
 
     v = t.via_size / 2
     h = t.bridge_half_width
-    landing = box(cx - t.pad[0] / 2, by - t.pad[1] / 2, x2, by + t.pad[1] / 2)
+    landing = box(px1, by - t.landing[1] / 2, px1 + t.landing[0], by + t.landing[1] / 2)
     shapes = [
+        ("met3", box(x1, y1, px2, y2)),
+        ("met3", box(px1, cy - t.via_pad[1] / 2, px2, cy + t.via_pad[1] / 2)),
         ("via3", box(cx - v, cy - v, cx + v, cy + v)),
-        (
-            "met3",
-            box(
-                cx - t.pad[0] / 2,
-                cy - t.pad[1] / 2,
-                cx + t.pad[0] / 2,
-                cy + t.pad[1] / 2,
-            ),
-        ),
         ("met4", box(cx - h, cy - h, cx + h, by + h)),
         ("via3", box(cx - v, by - v, cx + v, by + v)),
         ("met3", landing),
@@ -430,9 +478,12 @@ def insert_pin_stacks(pdk: TechName, layout: pya.Layout, cell: pya.Cell, trans):
 
 
 def write_placeholder(pdk: TechName, out_dir: str):
-    """Writes the slot macro (LEF, GDS, Verilog) the generic container is hardened with."""
+    """Writes the slot macro (LEF, GDS, Verilog) the generic container is hardened with. It is
+    the micro tile outline plus, beyond the pin edge, room for the jumpers; its origin is the
+    micro tile's, so a micro tile replaces it with the same placement."""
     t = MICRO_CONTAINER_TECH[pdk]
     width, height, pins, power_layer, stripes = micro_tile_interface(pdk)
+    slot_width, slot_height = slot_size(pdk)
     os.makedirs(out_dir, exist_ok=True)
 
     def rect(r) -> str:
@@ -447,7 +498,7 @@ def write_placeholder(pdk: TechName, out_dir: str):
         "  CLASS BLOCK ;",
         f"  FOREIGN {SLOT} ;",
         "  ORIGIN 0.000 0.000 ;",
-        f"  SIZE {width:.3f} BY {height:.3f} ;",
+        f"  SIZE {slot_width:.3f} BY {slot_height:.3f} ;",
     ]
     for net, use in (("VGND", "GROUND"), ("VPWR", "POWER")):
         lef += [f"  PIN {net}", "    DIRECTION INOUT ;", f"    USE {use} ;"]
@@ -472,39 +523,29 @@ def write_placeholder(pdk: TechName, out_dir: str):
         ]
     lef += ["  OBS"]
     dbu = 0.001
-    outline = pya.Region(pya.DBox(0, 0, width, height).to_itype(dbu))
-    # The micro tile's interior is obstructed on all its layers. In the pin strip only the
-    # jumpers' landing pads (the router's pins) are open on the pin layer, with free metal
-    # around them; the layer below is obstructed around the pins, so that no via can land on
-    # a pin from below.
-    strip_x = min(p[3][0] for p in pins)
-    inner = pya.Region(pya.DBox(0, 0, strip_x, height).to_itype(dbu))
+    # On the pin layer the whole macro is obstructed except around the landing pads (the
+    # router's pins, edge_clearance away from the micro tile) and the power stripes (for the
+    # PDN). Below it, only the micro tile and edge_clearance beyond its pin edge, less the
+    # spacing the router keeps from an obstruction anyway: the jumpers are on met3 and above.
+    outline = pya.Region(pya.DBox(0, 0, slot_width, slot_height).to_itype(dbu))
     pin_layer = pins[0][2]
-    below_pin = t.routing_layers[t.routing_layers.index(pin_layer) - 1]
-    pin_rows = pya.Region()
-    pin_keep = pya.Region()
+    landing = pya.Region()
     for p in pins:
-        x1, y1, x2, y2 = p[3]
-        pin_rows.insert(
-            pya.DBox(strip_x, y1 - t.pin_clearance, x2, y2 + t.pin_clearance).to_itype(
-                dbu
-            )
-        )
         lx1, ly1, lx2, ly2 = pin_stack(pdk, p[3])[0]
-        pin_keep.insert(
+        landing.insert(
             pya.DBox(
-                strip_x, ly1 - t.landing_clearance, lx2, ly2 + t.landing_clearance
+                lx1, ly1 - t.landing_clearance, slot_width, ly2 + t.landing_clearance
             ).to_itype(dbu)
         )
+    power = pya.Region()
+    for r in [s for net in stripes.values() for s in net]:
+        power.insert(pya.DBox(*r).to_itype(dbu))
     for layer in t.routing_layers:
-        obs = inner
-        if layer == below_pin:
-            obs = inner + pin_rows
-        if layer == power_layer or any(p[2] == layer for p in pins):
-            keep = pin_keep.dup()
-            for r in [s for net in stripes.values() for s in net]:
-                keep.insert(pya.DBox(*r).to_itype(dbu))
-            obs = outline - keep
+        if layer in (power_layer, pin_layer):
+            obs = outline - landing - power
+        else:
+            reach = width + t.edge_clearance[layer] - t.router_spacing[layer]
+            obs = pya.Region(pya.DBox(0, 0, reach, slot_height).to_itype(dbu))
         lef += [f"      LAYER {layer} ;"]
         for trap in obs.decompose_trapezoids_to_region().each():
             b = trap.bbox().to_dtype(dbu)
@@ -525,7 +566,7 @@ def write_placeholder(pdk: TechName, out_dir: str):
     layout.dbu = dbu
     cell = layout.create_cell(SLOT)
     cell.shapes(layout.layer(*tech_map[pdk].prboundary_layer)).insert(
-        pya.DBox(0, 0, width, height)
+        pya.DBox(0, 0, slot_width, slot_height)
     )
     shapes = [(name, layer, r) for name, _, layer, r in pins]
     shapes += [(net, power_layer, s) for net in stripes for s in stripes[net]]
@@ -574,12 +615,17 @@ def check_micro_tile(pdk: TechName, micro_dir: str, macro: str) -> List[str]:
     - pins and power stripes at the template positions (LEF),
     - every input that reaches a gate has at least the gate area the placeholder declares,
     - nothing on the container's layers (pin access via and above),
-    - nothing but the pins in the pin strip on the pin layer, where the tools draw the
-      jumpers. The frozen container has no metal of its own over a slot on the layers below
-      (test_micro_container.py), so the micro tile may use them up to its edge,
+    - nothing outside its outline,
+    - its signal pins drawn on the pin layer where the LEF says,
     - every LEF power port is drawn on the pin layer, on metal labeled with its own net and
       no other power net. LVS of the container does not see a VGND port on metal that is
-      not VGND: Magic joins the grounds through the substrate."""
+      not VGND: Magic joins the grounds through the substrate,
+    - nothing on forbidden_long_reach (deep nwell, photodiode, high voltage, poly resistors,
+      MiM caps), and nwell feol_edge_keepout from the edges facing the other slot.
+    Nothing else: the container draws nothing in a slot but copies of the pins (and the power
+    vias inside the power stripes), keeps edge_clearance from the slot outline outside it
+    (test_micro_container.py), and the slots of a column are slot_gap apart, so any micro tile
+    that is DRC clean on its own is DRC clean in the container."""
     t = MICRO_CONTAINER_TECH[pdk]
     errors = []
     with open(os.path.join(micro_dir, f"{macro}.lef")) as f:
@@ -594,7 +640,7 @@ def check_micro_tile(pdk: TechName, micro_dir: str, macro: str) -> List[str]:
     if macro_lef is None:
         return errors + [f"no macro {macro} in its LEF"]
     pin_layer = t.routing_layers[-1]
-    pins = pya.Region()
+    signal_pins: List[Tuple[str, Box]] = []
     power_ports: Dict[str, List[Box]] = {net: [] for net in POWER_NETS}
     for name, pin in re.findall(
         r"  PIN (\S+)\n(.*?)  END \1\n", macro_lef.group(1), re.S
@@ -609,8 +655,7 @@ def check_micro_tile(pdk: TechName, micro_dir: str, macro: str) -> List[str]:
             if net in power_ports:
                 power_ports[net] += rects
             continue
-        for r in rects:
-            pins.insert(pya.DBox(*r).to_itype(0.001))
+        signal_pins += [(name, r) for r in rects]
         gate = sum(float(v) for v in re.findall(r"ANTENNAGATEAREA ([\d.]+)", pin))
         if "DIRECTION INPUT" in pin and 0 < gate < t.input_gate_area - 1e-6:
             errors.append(
@@ -629,24 +674,49 @@ def check_micro_tile(pdk: TechName, micro_dir: str, macro: str) -> List[str]:
         if index is not None and not top.bbox_per_layer(index).empty():
             errors.append(f"shapes on {name}, which belongs to the container")
     width, height = template_interface(pdk)[0]
-    strip = pya.Region(
-        pya.DBox(width - t.strip_width + t.strip_tolerance, 0, width, height).to_itype(
-            layout.dbu
-        )
-    )
+    outline = pya.Region(pya.DBox(0, 0, width, height).to_itype(layout.dbu))
+    for index in layout.layer_indexes():
+        bbox = top.bbox_per_layer(index)
+        if bbox.empty() or bbox.inside(outline.bbox()):
+            continue
+        outside = pya.Region(top.begin_shapes_rec(index)) - outline
+        if not outside.is_empty():
+            info = layout.get_info(index)
+            b = outside.bbox().to_dtype(layout.dbu)
+            errors.append(
+                f"shapes on {info.layer}/{info.datatype} outside the micro tile outline, around {b}"
+            )
+    for name in t.forbidden_long_reach:
+        index = layout.find_layer(*t.gds[name])
+        if index is not None and not top.bbox_per_layer(index).empty():
+            errors.append(
+                f"shapes on {name}: its spacing rules reach further than the container keeps clear"
+            )
+    for name, keepout in t.feol_edge_keepout.items():
+        index = layout.find_layer(*t.gds[name])
+        if index is None:
+            continue
+        d = round(keepout / layout.dbu)
+        w, h = round(width / layout.dbu), round(height / layout.dbu)
+        bands = pya.Region(pya.Box(0, 0, w, d)) + pya.Region(pya.Box(0, h - d, w, h))
+        near = pya.Region(top.begin_shapes_rec(index)) & bands
+        if not near.is_empty():
+            b = near.bbox().to_dtype(layout.dbu)
+            errors.append(
+                f"{name} within {keepout} um of the top or bottom edge, around {b}: another micro tile faces it {t.slot_gap} um away"
+            )
     index = layout.find_layer(*t.gds[pin_layer])
     metal = (
         pya.Region(top.begin_shapes_rec(index)).merged()
         if index is not None
         else pya.Region()
     )
-    region = (metal & strip) - pins
-    area = region.area() * layout.dbu**2
-    if area > 1e-6:
-        b = region.bbox().to_dtype(layout.dbu)
-        errors.append(
-            f"{area:.3f} um2 of {pin_layer} in the pin strip (x > {width - t.strip_width:.2f}) apart from the pins, around {b}"
-        )
+    # The jumpers copy the pins: a pin that is not drawn would leave a stub next to tile metal
+    for name, r in signal_pins:
+        if not (pya.Region(pya.DBox(*r).to_itype(layout.dbu)) - metal).is_empty():
+            errors.append(
+                f"{name}: {pin_layer} at {r} (LEF) is not drawn in the layout"
+            )
     # The container's power vias land on the LEF power ports
     labels: Dict[str, pya.Region] = {net: pya.Region() for net in POWER_NETS}
     for gds_layer in t.pin_label_gds[pin_layer]:
@@ -810,13 +880,15 @@ def assemble(
     top_cell = layout.cell(GENERIC)
     slot_cell = layout.cell(SLOT)
     assert top_cell is not None and slot_cell is not None
-    dbu = layout.dbu
+    width, height = template_interface(pdk)[0]
 
     by_slot = {}
     for inst in top_cell.each_inst():
         if inst.cell_index != slot_cell.cell_index():
             continue
-        origin = (round(inst.bbox().left * dbu, 3), round(inst.bbox().bottom * dbu, 3))
+        # The micro tile outline in the slot (the placeholder also holds the jumpers)
+        tile = pya.DBox(0, 0, width, height).transformed(inst.dcplx_trans)
+        origin = (round(tile.left, 3), round(tile.bottom, 3))
         index = next(i for i, (location, _) in enumerate(t.slots) if location == origin)
         assert inst.trans.is_mirror() == (t.slots[index][1] == "FN")
         by_slot[index] = inst
