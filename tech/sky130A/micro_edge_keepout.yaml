@@ -1,0 +1,25 @@
+# Bands along the edges of a micro tile that its metal stays out of, so that it cannot come
+# too close to the metal of the container project that holds four micro tiles, or to the
+# micro tile next to it. Hardening obstructs them (ROUTING_OBSTRUCTIONS) and the precheck
+# checks them.
+#
+# Width of each band in um, per layer: left, bottom, right (the pin edge), top.
+# - Right: the container may route up to the micro tile's edge on li1, met1 and met2, so
+#   the band is the spacing to metal wider than 3 um (li.3: 0.17, met1.3b and met2.3b:
+#   0.28). On met3 the container draws a pad on every pin and a landing pad between the
+#   pins, 0.65 um from the edge: 0.65 + 0.3 (met3.2). Met3 wider than 3 um is at least
+#   0.4 um from the pins (met3.3d), so it stays clear of the pads too.
+# - Bottom and top: two micro tiles abut, so each keeps half of those spacings.
+# - Left: the edge of the container, which the multiplexer keeps 1.84 um from other blocks.
+bands:
+  li1: [0, 0.085, 0.17, 0.085]
+  met1: [0, 0.14, 0.28, 0.14]
+  met2: [0, 0.14, 0.28, 0.14]
+  met3: [0, 0.2, 0.95, 0.2]
+# On met3 the right band is open around each pin, for the wire that reaches it: metal may
+# extend this far above and below a pin there.
+pin_window: 0.3
+# The obstructions leave this much free above and below each pin: the window plus the met3
+# spacing (the router keeps the spacing from an obstruction, so a pin's wire stays inside
+# the window). That is also the spacing of a clock net with a non-default rule (CTS).
+pin_obstruction_gap: 0.6

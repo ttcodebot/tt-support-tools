@@ -52,6 +52,54 @@ PINOUT_KEYS = [
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 
+def micro_routing_obstructions(pdk: TechName) -> typing.List[str]:
+    """LibreLane ROUTING_OBSTRUCTIONS over the bands along the edges of a micro tile that its
+    metal stays out of (tech/<pdk>/micro_edge_keepout.yaml), open around the pins. Empty if
+    the PDK has no such bands."""
+    tech_dir = os.path.join(SCRIPT_DIR, "tech", pdk)
+    keepout_file = os.path.join(tech_dir, "micro_edge_keepout.yaml")
+    if not os.path.exists(keepout_file):
+        return []
+    with open(keepout_file) as f:
+        keepout = yaml.safe_load(f)
+    with open(os.path.join(tech_dir, "tile_sizes.yaml")) as f:
+        _, _, width, height = map(float, yaml.safe_load(f)["micro"].split())
+    def_file = f"def/tt_block_micro_{tech_map[pdk].def_suffix}.def"
+    with open(os.path.join(tech_dir, def_file)) as f:
+        template = f.read()
+    units = re.search(r"UNITS DISTANCE MICRONS (\d+) ;", template)
+    assert units is not None, f"no UNITS in {def_file}"
+    scale = int(units.group(1))
+    pins = []
+    for layer, _, y1, _, y2, _, y in re.findall(
+        r"\+ LAYER (\S+) \( (-?\d+) (-?\d+) \) \( (-?\d+) (-?\d+) \)\s+"
+        r"\+ PLACED \( (-?\d+) (-?\d+) \)",
+        template,
+    ):
+        pins.append((layer, (int(y) + int(y1)) / scale, (int(y) + int(y2)) / scale))
+    gap = keepout["pin_obstruction_gap"]
+    boxes = []
+    for layer, (left, bottom, right, top) in keepout["bands"].items():
+        if left:
+            boxes.append((layer, 0, 0, left, height))
+        if bottom:
+            boxes.append((layer, 0, 0, width, bottom))
+        if top:
+            boxes.append((layer, 0, height - top, width, height))
+        if right:
+            y = 0.0
+            pin_rows = [(a - gap, b + gap) for pl, a, b in pins if pl == layer]
+            for y1, y2 in sorted(pin_rows):
+                if y1 > y:
+                    boxes.append((layer, width - right, y, width, y1))
+                y = max(y, y2)
+            if y < height:
+                boxes.append((layer, width - right, y, width, height))
+    return [
+        f"{layer} " + " ".join(f"{round(v, 3):g}" for v in box) for layer, *box in boxes
+    ]
+
+
 class Project:
     top_verilog_filename: str
     mux_address: int
@@ -517,6 +565,9 @@ class Project:
         config.update(self.tech.librelane_config)
         if self.info.is_micro:
             config.update(self.tech.micro_librelane_config)
+            obstructions = micro_routing_obstructions(self.pdk)
+            if obstructions:
+                config["ROUTING_OBSTRUCTIONS"] = obstructions
         write_config(config, os.path.join(self.src_dir, "user_config"), ("json",))
         self.create_merged_config()
 
