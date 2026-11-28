@@ -1,12 +1,14 @@
 import os
 import re
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
 import klayout.db as pya
 import klayout_tools
 import pytest
+import tech_data
 
 import precheck
 
@@ -906,6 +908,50 @@ def test_klayout_checks_micro_fail_metal4(gds_metal4_poly: str):
         precheck.PrecheckFailure, match=r"Forbidden layer met4\.drawing found in .+"
     ):
         precheck.klayout_checks(gds_metal4_poly, "TEST_met4", PDK_NAME, is_micro=True)
+
+
+@sky130A_only
+@pytest.mark.parametrize("layer_name", tech_data.micro_forbidden_layers["sky130A"])
+def test_klayout_checks_micro_fail_forbidden_layer(tmp_path: Path, layer_name: str):
+    """The container's layers, and those whose spacing rules reach further than the
+    container keeps clear around a micro tile: fine for a regular project, not for a micro
+    tile."""
+    gds_file = str(tmp_path / "TEST_micro_forbidden.gds")
+    layout = pya.Layout()
+    top_cell = layout.create_cell("TEST_micro_forbidden")
+    for name, rect in [
+        ("prBoundary.boundary", pya.DBox(0, 0, 70.38, 51.68)),
+        (layer_name, pya.DBox(20, 20, 25, 25)),
+    ]:
+        layer_info = gds_layers[name]
+        layer = layout.layer(layer_info.layer, layer_info.data_type)
+        top_cell.shapes(layer).insert(rect)
+    layout.write(gds_file)
+    precheck.klayout_checks(gds_file, "TEST_micro_forbidden", PDK_NAME)
+    with pytest.raises(
+        precheck.PrecheckFailure,
+        match=rf"Forbidden layer {re.escape(layer_name)} found in .+",
+    ):
+        precheck.klayout_checks(
+            gds_file, "TEST_micro_forbidden", PDK_NAME, is_micro=True
+        )
+
+
+@sky130A_only
+def test_micro_forbidden_layers_match_the_container():
+    """Apart from the container's own layers, the precheck forbids in a micro tile exactly
+    the layers the shuttle's micro tile check rejects (forbidden_long_reach)."""
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    import micro_container
+
+    t = micro_container.MICRO_CONTAINER_TECH[PDK_NAME]
+    forbidden = {
+        (gds_layers[name].layer, gds_layers[name].data_type)
+        for name in tech_data.micro_forbidden_layers[PDK_NAME]
+    }
+    container = {t.gds[name] for name in t.forbidden_layers}
+    container |= set(t.pin_label_gds["met4"])
+    assert forbidden - container == {t.gds[name] for name in t.forbidden_long_reach}
 
 
 @sky130A_only

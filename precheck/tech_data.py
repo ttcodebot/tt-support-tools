@@ -251,9 +251,24 @@ micro_power_pins_min_width = {
     "ihp-sg13cmos5l": 1000,  # 1.0 um
     "gf180mcuD": 800,  # 0.8 um
 }
-# Layers that belong to the container and must stay empty in a micro tile
+# Layers that must stay empty in a micro tile: those that belong to the container and, for
+# sky130A, those whose spacing rules reach further than the container keeps clear around a
+# micro tile (forbidden_long_reach in micro_container.py; no standard cell uses them)
 micro_forbidden_layers = {
-    "sky130A": ["via3.drawing", "met4.drawing", "met4.pin", "met4.label"],
+    "sky130A": [
+        "via3.drawing",
+        "met4.drawing",
+        "met4.pin",
+        "met4.label",
+        "dnwell.drawing",
+        "areaid.photo",
+        "hvi.drawing",
+        "hvntm.drawing",
+        "rpm.drawing",
+        "urpm",
+        "capm.drawing",
+        "capm2.drawing",
+    ],
     "ihp-sg13cmos5l": [
         "Via3.drawing",
         "Metal4.drawing",
