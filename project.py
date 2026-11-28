@@ -58,6 +58,8 @@ class Project:
     analog_pins: tuple[int, ...]
     commit_id: str
     sort_id: int
+    # Micro tile container: its micro tiles in slot order; the slots after them hold fillers
+    micro_tiles: typing.List["Project"]
 
     def __init__(
         self,
@@ -69,6 +71,7 @@ class Project:
     ):
         self.git_url = git_url
         self.pdk = pdk
+        self.micro_tiles = []
         self.tech = tech_map[pdk]
         self.index = index
         self.local_dir = os.path.realpath(local_dir)
