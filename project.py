@@ -256,8 +256,8 @@ class Project:
                 logging.warning(f"{self} only has {num_cells} cells")
 
     # docs stuff for index on README.md
-    def get_index_row(self):
-        return f"| {self.mux_address} | {self.info.author} | {self.info.title} | {self.get_project_type_string()} | {self.git_url} |\n"
+    def get_index_row(self, address: str):
+        return f"| {address} | {self.info.author} | {self.info.title} | {self.get_project_type_string()} | {self.git_url} |\n"
 
     def get_project_type_string(self):
         if self.is_wokwi():
